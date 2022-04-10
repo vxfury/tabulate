@@ -548,12 +548,20 @@ SET(CMAKE_ASM_FLAGS_RELEASE ${CMAKE_ASM_FLAGS})
 SET(CMAKE_EXE_LINKER_FLAGS_RELEASE ${CMAKE_EXE_LINKER_FLAGS})
 
 ENABLE_TESTING()
-FILE(GLOB files samples/*.cc)
+FILE(GLOB files samples/tabulate/*.cc)
 FOREACH (file ${files})
   GET_FILENAME_COMPONENT(sample ${file} NAME_WE)
-  ADD_EXECUTABLE(${sample} ${file})
-  TARGET_INCLUDE_DIRECTORIES(${sample} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
-  ADD_TEST(NAME ${sample} COMMAND ${sample}
+  ADD_EXECUTABLE(tabulate_${sample} ${file})
+  TARGET_INCLUDE_DIRECTORIES(tabulate_${sample} PRIVATE ${CMAKE_CURRENT_SOURCE_DIR})
+  ADD_TEST(NAME tabulate_${sample} COMMAND tabulate_${sample}
            WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   )
 ENDFOREACH ()
+
+ADD_EXECUTABLE(tls samples/tls/app.cpp samples/tls/psk.cpp)
+TARGET_INCLUDE_DIRECTORIES(tls PRIVATE ${CMAKE_CURRENT_SOURCE_DIR} /usr/local/opt/openssl@1.1/include)
+TARGET_LINK_DIRECTORIES(tls PRIVATE /usr/local/opt/openssl@1.1/lib)
+TARGET_LINK_LIBRARIES(tls PRIVATE ssl crypto)
+TARGET_COMPILE_DEFINITIONS(
+  tls PRIVATE -DTLS_CERT_KEY_DIR="${CMAKE_CURRENT_SOURCE_DIR}/samples/tls/"
+)

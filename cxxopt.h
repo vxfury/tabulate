@@ -17,6 +17,7 @@
 #include <string>
 #include <vector>
 #include <sstream>
+#include <iostream>
 #include <exception>
 #include <map>
 #include <unordered_map>
@@ -591,6 +592,7 @@ struct Results {
 
 class Options {
   public:
+    Options() {}
     Options(std::string program, std::string description) : program(program), description(description) {}
 
     option &add(const char *opts, const char *brief, std::shared_ptr<Values> val, int type,
@@ -635,7 +637,7 @@ class Options {
 
     class group_adder {
       public:
-        group_adder(Options &options_, std::string group) : options_(options_), group_(std::move(group)) {}
+        group_adder(Options &options, std::string group) : options_(options), group_(std::move(group)) {}
         group_adder &operator()(const char *opts, const char *brief)
         {
             options_.add(opts, brief, Value(), NOARG, group_);
@@ -1064,5 +1066,106 @@ class Options {
         }
         return str;
     }
+};
+
+class Dispatcher {
+  public:
+    Dispatcher(std::string program) : program(std::move(program)) {}
+
+    int add(std::string name, int (*main)(int argc, char **argv))
+    {
+        if (handlers.count(name) == 0) {
+            handlers[name] = new BasicHandler(main);
+            return 0;
+        } else {
+            return -EEXIST;
+        }
+    }
+
+    template <typename T, int (T::*cli_main)(int argc, char **argv)>
+    int add(std::string name, T *obj)
+    {
+        if (handlers.count(name) == 0) {
+            handlers[name] = new MemberHandler<T, T::cli_main>(obj);
+            return 0;
+        } else {
+            return -EEXIST;
+        }
+    }
+
+    int operator()(int argc, char **argv)
+    {
+        if (argc < 2 || *argv[1] == '-') {
+            if (handlers.count("") != 0 && handlers.at("")->valid()) {
+                return handlers.at("")->operator()(argc, argv);
+            } else {
+                std::string str = "`" + program + " ";
+                if (handlers.size() > 0) {
+                    for (auto &pair : handlers) {
+                        str += pair.first + "|";
+                    }
+                    str.erase(str.size() - 1, 1);
+                    str += " --help` for details";
+                } else {
+                    str += "No sub-command added";
+                }
+                std::cout << str << std::endl;
+
+                return 0;
+            }
+        } else {
+            if (handlers.count(argv[1]) > 0) {
+                auto handler = handlers.at(argv[1]);
+                return handler->valid() ? handler->operator()(argc - 1, argv + 1) : -EINVAL;
+            }
+            return -ENOTSUP;
+        }
+    }
+
+  private:
+    class Handler {
+      public:
+        virtual bool valid() = 0;
+        virtual int operator()(int argc, char **argv) = 0;
+    };
+
+    class BasicHandler : public Handler {
+      public:
+        BasicHandler(int (*handler)(int argc, char **argv)) : handler(handler) {}
+
+        virtual bool valid() override
+        {
+            return handler != nullptr;
+        }
+
+        virtual int operator()(int argc, char **argv) override
+        {
+            return handler(argc, argv);
+        }
+
+      private:
+        int (*handler)(int argc, char **argv);
+    };
+
+    template <typename T, int (T::*cli_main)(int argc, char **argv)>
+    class MemberHandler : public Handler {
+      public:
+        MemberHandler(T *obj) : obj_(obj) {}
+
+        virtual bool valid() override
+        {
+            return obj_ != nullptr;
+        }
+
+        virtual int operator()(int argc, char **argv) override
+        {
+            return (obj_->*cli_main)(argc, argv);
+        }
+
+      private:
+        T *obj_;
+    };
+    std::string program;
+    std::map<std::string, Handler *> handlers;
 };
 } // namespace cxxopt
