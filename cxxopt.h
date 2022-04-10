@@ -1071,6 +1071,12 @@ class Options {
 class Dispatcher {
   public:
     Dispatcher(std::string program) : program(std::move(program)) {}
+    ~Dispatcher()
+    {
+        for (auto handler : handlers) {
+            delete handler.second;
+        }
+    }
 
     int add(std::string name, int (*main)(int argc, char **argv))
     {
@@ -1125,6 +1131,8 @@ class Dispatcher {
   private:
     class Handler {
       public:
+        virtual ~Handler() {}
+
         virtual bool valid() = 0;
         virtual int operator()(int argc, char **argv) = 0;
     };
