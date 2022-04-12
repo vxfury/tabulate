@@ -13,6 +13,7 @@ import itertools
 import argparse
 import string
 import tty
+import ctypes
 import termios
 import xml.etree.ElementTree as ET
 
@@ -32,36 +33,85 @@ COPYRIGHT = b"""/**
  * limitations under the License.
  */\n\n"""
 
+
 # tqdm has bugs.
 # CSI sequence: https://www.liquisearch.com/ansi_escape_code/csi_codes
 class ProgressBar:
+    """
+    Progress Bar
+
+    ...
+
+    Attributes
+    ----------
+    disable: bool
+        True to disable progress bar (default False)
+    position: tuple(int, int)
+        the number of legs the animal has (default 4)
+    progress: float[0.0, 100.0]
+        percentage of progress
+    max_width: int
+        max width of entire progress bar (default terminal.columns)
+    bar_width: int
+        bar width of progress bar (default max_width // 2)
+
+    Methods
+    -------
+    advance(progress)
+        Inc progress and refresh display
+    set_progress(progress)
+        Set progress and refresh display
+    set_args(**kwargs)
+        Set arguments and refresh display
+    add_args(**kwargs)
+        Add arguments and refresh display
+    clear()
+        Clear display once time
+    """
+
     def __init__(
         self,
-        format="{progress} {elapsed} | {bar} | {remaining}",
-        position=None,
-        disable=False,
-        leave=True,
-        width=0,
-        bar_width=0,
+        format: str = "{progress} {elapsed} | {bar} | {remaining}",
+        position: tuple[int, int] = None,
+        disable: bool = False,
+        leave: bool = True,
+        total: float = 100.0,
+        max_width: int = 0,
+        bar_width: int = 0,
         file=sys.stdout,
-        keep_cursor_hidden=False,
+        keep_cursor_hidden: bool = False,
+        manager: multiprocessing.Manager = None,
         **kwargs,
     ):
-        self.format = format
-        self.kwargs = kwargs
-        self.progress = 0.0  # [0.0, 100.0]
+        """
+        format: progress bar format, internal keys: progress, elapsed, bar, remaining
+        position: position of bar
+        disable: True to hide the progress bar
+        leave: True to leave the progress bar after exit
+        total: max size to advance
+        max_width: max width of entire progress bar
+        bar_width: bar width
+        file: destination of progress bar (default sys.stdout)
+        keep_cursor_hidden: True to keep cursor hidden after exit
+        manager: multiprocessing support
+        kwargs: custom key-value pairs
+        """
+        self.__file = file
+        self.__leave = leave
+        self.__total = total
+        self.__format = format
+        self.__kwargs = kwargs
+        self.__starttime = time.time()
+        self.__keep_cursor_hidden = keep_cursor_hidden
+        self.__lock = None if manager is None else manager.Lock()
+        self.__progress = 0.0 if manager is None else manager.Value(ctypes.c_float, 0.0)
 
-        self.file = file
-        self.leave = leave
         self.disable = disable
         self.position = position
-        self.starttime = time.time()
-        self.keep_cursor_hidden = keep_cursor_hidden
-        self.width = width if width else os.get_terminal_size().columns - 8
-        self.bar_width = bar_width if bar_width != 0 and bar_width < self.width else self.width // 2
+        self.max_width = max_width if max_width else os.get_terminal_size().columns - 8
+        self.bar_width = bar_width if bar_width != 0 and bar_width < self.max_width else self.max_width // 2
 
-        # CSI?25l: Hides the cursor
-        self.__display()
+        self.__display()  # CSI?25l: Hides the cursor
 
     def __del__(self):
         if not self.disable:
@@ -69,12 +119,12 @@ class ProgressBar:
             if self.position:
                 # `CSI n ; m H`: Moves the cursor to row n, column m
                 outputs += f"\x1B[{self.position[0]};{self.position[1]}H"
-            if not self.leave:
+            if not self.__leave:
                 # `CSI n k`: Erases part of the line
                 outputs += "\x1B[2K"  # n=2, clear entire line
             else:
-                outputs += "\x1B[E"
-            if not self.keep_cursor_hidden:
+                outputs += "\x1B[E\r"
+            if not self.__keep_cursor_hidden:
                 # `CSI ? 25 h``: Shows the cursor
                 outputs += "\x1B[?25h"
             self.__write(outputs + "\r")
@@ -91,41 +141,67 @@ class ProgressBar:
             outputs += "\x1B[2K\r"  # n=2, clear entire line
             self.__write(outputs)
 
-    def advance(self, progress):
+    def advance(self, step):
         """
-        advance progress by <progress>
+        advance progress by <100.0 * step / total>
         """
+        if self.__lock:
+            self.__lock.acquire()
         last_progress = self.progress
-        self.progress = min(100.0, self.progress + progress)
-        if last_progress != self.progress:
+        if last_progress != self.__inc_progress(100.0 * step / self.__total):
             self.__display()
+        if self.__lock:
+            self.__lock.release()
+
+    @property
+    def progress(self):
+        """
+        get progress
+        """
+        if isinstance(self.__progress, float):
+            return self.__progress
+        else:
+            return self.__progress.value
+
+    @progress.setter
+    def progress(self, val):
+        self.set_progress(val)
+
+    def __set_progress(self, progress):
+        if isinstance(self.__progress, float):
+            self.__progress = min(progress, 100.0)
+            return self.__progress
+        else:
+            self.__progress.value = min(progress, 100.0)
+            return self.__progress.value
+
+    def __inc_progress(self, progress):
+        if isinstance(self.__progress, float):
+            self.__progress = min(self.__progress + progress, 100.0)
+            return self.__progress
+        else:
+            self.__progress.value = min(self.__progress.value + progress, 100.0)
+            return self.__progress.value
 
     def set_progress(self, progress):
         """
         set progress to <progress>
         """
-        if progress != self.progress:
-            self.progress = progress
+        if self.__lock:
+            self.__lock.acquire()
+        if self.progress != self.__set_progress(progress):
             self.__display()
+        if self.__lock:
+            self.__lock.release()
 
     def set_args(self, **kwargs):
-        if kwargs != self.kwargs:
-            self.kwargs = kwargs
+        if kwargs != self.__kwargs:
+            self.__kwargs = kwargs
             self.__display()
 
     def add_args(self, **kwargs):
-        self.kwargs.update(kwargs)
+        self.__kwargs.update(kwargs)
         self.__display()
-
-    class BlankFormatter(string.Formatter):
-        def __init__(self, default=""):
-            self.default = default
-
-        def get_value(self, key, args, kwds):
-            if isinstance(key, str):
-                return kwds.get(key, self.default)
-            else:
-                return string.Formatter.get_value(key, args, kwds)
 
     def __display(self):
         def format_seconds(t):
@@ -143,14 +219,30 @@ class ProgressBar:
             l = int(w * p / 100.0) if p < 99.9 else w
             return ">" * l + " " * (w - l)
 
+        def format_all(format, **kwargs):
+            class BlankFormatter(string.Formatter):
+                def __init__(self, default=""):
+                    self.default = default
+
+                def get_value(self, key, args, kwds):
+                    if isinstance(key, str):
+                        return kwds.get(key, self.default)
+                    else:
+                        return string.Formatter.get_value(key, args, kwds)
+
+            text = BlankFormatter().format(format, **kwargs).rstrip()
+            while text.endswith(":"):
+                text = text[: len(text) - 1].rstrip()
+            return text
+
         if not self.disable:
             now = time.time()
-            self.kwargs["progress"] = "{0:5.1f}%".format(self.progress)
-            self.kwargs["bar"] = format_bar(self.progress, self.bar_width)
+            self.__kwargs["progress"] = "{0:5.1f}%".format(self.progress)
+            self.__kwargs["bar"] = format_bar(self.progress, self.bar_width)
 
-            self.kwargs["elapsed"] = format_seconds(now - self.starttime)
-            self.kwargs["remaining"] = (
-                format_seconds((now - self.starttime) * (100 - self.progress) / self.progress)
+            self.__kwargs["elapsed"] = format_seconds(now - self.__starttime)
+            self.__kwargs["remaining"] = (
+                format_seconds((now - self.__starttime) * (100 - self.progress) / self.progress)
                 if self.progress
                 else "--:--"
             )
@@ -162,24 +254,21 @@ class ProgressBar:
             else:
                 outputs += "\r"
 
-            line = ProgressBar.BlankFormatter().format(self.format, **self.kwargs).rstrip()
-            while line.endswith(":"):
-                line = line[: len(line) - 1].rstrip()
-
-            if self.width != 0:
-                if len(line) > self.width:
+            line = format_all(self.__format, **self.__kwargs)
+            if self.max_width != 0:
+                if len(line) > self.max_width:
                     truncated = "..."
-                    if self.width >= len(truncated):
-                        line = line[: (self.width - len(truncated))] + truncated + "\x1b[0m"
+                    if self.max_width >= len(truncated):
+                        line = line[: (self.max_width - len(truncated))] + truncated + "\x1b[0m"
                     else:
-                        line = line[: self.width] + "\x1b[0m"
+                        line = line[: self.max_width] + "\x1b[0m"
             outputs += line + "\x1B[0K"
             if self.position:
                 outputs += "\x1B[u"
             self.__write(outputs)
 
     def __write(self, str):
-        file = self.file if self.file else sys.stdout
+        file = self.__file if self.__file else sys.stdout
         file.write(str)
         file.flush()
 
@@ -218,37 +307,59 @@ class ProgressBars:
         self,
         format,
         size,
-        width=os.get_terminal_size().columns,
+        max_width=os.get_terminal_size().columns,
         bar_width=0,
         disable=False,
         leave=False,
         initial_pos=None,
+        overall_total=0,
+        manager: multiprocessing.Manager = None,
     ):
+        offset = 0
+        if overall_total != 0:
+            self.overall = ProgressBar(
+                leave=True,
+                disable=disable,
+                total=overall_total,
+                file=None,
+                max_width=max_width,
+                bar_width=bar_width,
+                position=initial_pos,
+                keep_cursor_hidden=True,
+                manager=manager,
+            )
+            offset = 1
+        else:
+            self.overall = None  # pass
+
         self.bars = [
             ProgressBar(
                 format,
                 disable=disable,
                 file=None,
-                width=width,
+                max_width=max_width,
                 bar_width=bar_width,
                 leave=True,  # keep bar if not all bars end
                 position=((initial_pos[0] + i), initial_pos[1]) if initial_pos else None,
                 keep_cursor_hidden=True,
+                manager=manager,
             )
-            for i in range(size)
+            for i in range(offset, size + offset)
         ]
-        self.leave = leave
+        self.__leave = leave
         self.disable = disable
         self.initial_pos = initial_pos
 
     def __del__(self):
-        if self.leave:
+        if self.__leave:
             off = len(self.bars)
             self.bars = []
         else:
             off = 0
             for bar in self.bars:
                 bar.clear()
+
+        off += 0 if self.overall is None else 1
 
         if not self.disable:
             outputs = ""
@@ -448,7 +559,7 @@ def _binary_search(arr, l, r, comparator):
         return _binary_search(arr, mid + 1, r, comparator)
 
 
-def generate_replacements(repo: git.Repo, path, limit=256, bar: ProgressBar = None):
+def generate_replacements(repo: git.Repo, path, limit, bar: ProgressBar, overall_bar: ProgressBar):
     replacements_by_paths = {}
     replacements_by_affected_commits = {}
     bar.set_args(
@@ -471,7 +582,6 @@ def generate_replacements(repo: git.Repo, path, limit=256, bar: ProgressBar = No
             replacements_for_cur_file = ClangFormatXMLReplacementGenerator().generate(file, bar=bar)
 
             if not replacements_for_cur_file:
-                bar.set_progress(100.0)
                 bar.add_args(desc=f"no replacements found")
                 return None, None
 
@@ -505,6 +615,7 @@ def generate_replacements(repo: git.Repo, path, limit=256, bar: ProgressBar = No
     except PermissionError as e:
         bar.add_args(desc=f"\x1B[33mpermission denied, skipped\x1B[0m")
     finally:
+        overall_bar.advance(1)
         bar.set_progress(100.0)
 
     return (
@@ -581,18 +692,21 @@ def repo_format_main(initial_pos):
     # process files specified in arguments. new commits will be created during processing,
     # so we cache current head for accurate blaming results.
     with multiprocessing.Pool(processes=int(args.jobs)) as pool:
+        manager = multiprocessing.Manager()
         size = min(int(args.jobs), multiprocessing.cpu_count() // 2, len(files))
         bars = ProgressBars(
             "{progress} {elapsed} | {file}: {desc}",
             size,
             leave=False,
             disable=bool(args.quiet),
-            initial_pos=initial_pos,
+            initial_pos=(initial_pos[0] + 1, initial_pos[1]),
+            overall_total=len(files),
+            manager=manager,
         )
 
         results = pool.starmap_async(
             generate_replacements,
-            [(repo, path, int(args.limit), bars[i]) for i, path in enumerate(files)],
+            [(repo, path, int(args.limit), bars[i], bars.overall) for i, path in enumerate(files)],
         ).get()
         pool.close()
         pool.join()
@@ -700,15 +814,53 @@ def repo_format_main(initial_pos):
     )
 
 
+import random
+
+
+def progress_bar_main():
+    bar = ProgressBar(leave=True, widht=90, total=500, bar_width=60)
+    for i in range(0, 500):
+        bar.advance(1)
+        time.sleep(0.005)
+
+
+def progress_bar_test(length, bar, overall_bar):
+    remain = length
+    while remain > 0:
+        len = random.randint(0, remain)
+        remain -= len
+        time.sleep(0.001)
+        bar.set_progress(100 * (length - remain) / length)
+    overall_bar.advance(1)
+
+
+def progress_bars_main(initial_pos):
+    manager = multiprocessing.Manager()
+    with multiprocessing.Pool(processes=6) as pool:
+        size = 3
+        total = 10000
+        initial_pos = initial_pos
+        bars = ProgressBars(
+            "{progress} {elapsed} | {bar} | {remaining}",
+            size,
+            leave=True,
+            initial_pos=(initial_pos[0] + 1, initial_pos[1]),
+            overall_total=total,
+            manager=manager,
+        )
+
+        pool.starmap_async(
+            progress_bar_test,
+            [(random.randint(1000, 10000), bars[i], bars.overall) for i in range(total)],
+        ).get()
+        pool.close()
+        pool.join()
+
+
 if __name__ == "__main__":
     repo_format_main(ProgressBar.getpos())
-
-    # example for ProgressBar
-    # bar = ProgressBar(leave=True, widht=100, bar_width=75)
-    # for i in range(0, 1000):
-    #     bar.advance(0.1)
-    #     time.sleep(0.005)
-
+    # progress_bar_main()
+    # progress_bars_main(ProgressBar.getpos())
 
 """ .clang-format
 ---
