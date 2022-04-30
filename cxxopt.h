@@ -20,9 +20,12 @@
 #include <iostream>
 #include <exception>
 #include <map>
+#include <memory>
 #include <unordered_map>
+#include <algorithm>
 
 #include <stdio.h>
+#include <string.h>
 #define TRACE(fmt, ...) // printf("%d: " fmt "\n", __LINE__, ##__VA_ARGS__)
 
 namespace cxxopt

@@ -22,14 +22,12 @@
 #include <functional>         // std::function
 #include <future>             // std::future, std::promise
 #include <memory>             // std::shared_ptr, std::unique_ptr
-#include <mutex>              // std::mutex, std::scoped_lock
+#include <mutex>              // std::mutex, std::lock_guard
 #include <queue>              // std::queue
 #include <thread>             // std::this_thread, std::thread
 #include <type_traits>        // std::decay_t, std::enable_if_t, std::is_void_v, std::invoke_result_t
 #include <utility>            // std::move, std::swap
 #include <condition_variable> // std::condition_variable
-
-#define USE_CONDITION_VARIABLE
 
 namespace multiprocessing
 {
@@ -38,53 +36,89 @@ namespace multiprocessing
  * available, it pops a task from the queue and executes it. Each task is automatically assigned a future, which can be
  * used to wait for the task to finish executing and/or obtain its eventual return value.
  */
+
+/**
+ * if your threads in the thread pool are constantly fed with tasks and you need fast response time, then yield is what
+ * you want, but yield will burn cpu cycles no matter what the waiting thread is doing. if not, you can use the
+ * conditional approach, threads will sleep until a task is ready (note though, a conditional can wake a thread, even if
+ * no ready signal was sent), the response time might be slower, but you will not burn cpu cycles.
+ *
+ * I would recommend the conditional approach, and if the reaction time is too slow, switch to yield.
+ *
+ */
+enum {
+    THREAD_YIELD,
+    SCHED_DURATION,
+    CONDITION_VARIABLE,
+};
+
+template <int strategy = CONDITION_VARIABLE, size_t duration = 5>
 class threadpool {
   public:
-    using size_type = std::uint_fast32_t;
-
+    using size_type = unsigned int;
     threadpool(size_type concurrency = std::thread::hardware_concurrency())
-        : worker_count(concurrency ? concurrency : std::thread::hardware_concurrency()),
-          workers(new std::thread[worker_count])
+        : paused(false),
+          stopped(false),
+          concurrency(concurrency),
+          workers(new std::thread[concurrency]),
+          unfinished_task_size(0)
     {
-        for (size_type i = 0; i < worker_count; i++) {
-            workers[i] = std::thread(&threadpool::worker, this);
+        for (size_type i = 0; i < concurrency; i++) {
+            workers[i] = std::thread(&threadpool::__worker, this);
+        }
+    }
+    ~threadpool()
+    {
+        shutdown();
+    }
+
+    void pause()
+    {
+        paused = true;
+    }
+
+    void resume()
+    {
+        paused = false;
+        if constexpr (strategy == CONDITION_VARIABLE) {
+            queue_cond.notify_all();
         }
     }
 
-    ~threadpool()
+    void shutdown()
     {
-#ifndef USE_CONDITION_VARIABLE
-        // wait tasks
-        while (true) {
-            if (!paused) {
-                if (tasks_total == 0) break;
-            } else {
-                if (get_tasks_running() == 0) break;
+        if (!stopped) {
+            stopped = true;
+            if constexpr (strategy == CONDITION_VARIABLE) {
+                queue_cond.notify_all();
             }
-            __idle();
-        }
-#endif
 
-        // join workers
-        shutdown = true;
-#ifdef USE_CONDITION_VARIABLE
-        queue_cond.notify_all();
-#endif
-        for (size_type i = 0; i < worker_count; i++) {
-            workers[i].join();
+            for (size_type i = 0; i < concurrency; i++) {
+                workers[i].join();
+            }
         }
+    }
+
+    bool is_alive()
+    {
+        return !stopped;
+    }
+
+    bool is_active()
+    {
+        return !stopped && !paused;
     }
 
     size_type get_tasks_running() const
     {
-        const std::scoped_lock lock(queue_mutex);
-        return tasks_total - tasks.size();
+        std::lock_guard<std::mutex> guard(queue_lock);
+        return unfinished_task_size - task_queue.size();
     }
 
-    template <typename T, typename F>
-    void parallelize(T first_index, T last_index, const F &loop, size_type num_tasks = 0)
+    template <typename T, typename Func>
+    void parallelize(T first_index, T last_index, const Func &loop, size_type num_tasks = 0)
     {
-        if (num_tasks == 0) num_tasks = worker_count;
+        if (num_tasks == 0) num_tasks = concurrency;
         if (last_index < first_index) std::swap(last_index, first_index);
         size_t total_size = last_index - first_index + 1;
         size_t block_size = total_size / num_tasks;
@@ -103,28 +137,47 @@ class threadpool {
             });
         }
         while (blocks_running != 0) {
-            __idle();
+            if constexpr (strategy == CONDITION_VARIABLE) {
+                std::unique_lock<std::mutex> lock(queue_lock);
+                queue_cond.wait(lock, [this] {
+                    return stopped || (!paused || !task_queue.empty());
+                });
+            }
+            if constexpr (strategy == THREAD_YIELD) {
+                std::this_thread::yield();
+            }
+            if constexpr (strategy == SCHED_DURATION) {
+                std::this_thread::sleep_for(std::chrono::microseconds(duration));
+            }
         }
     }
 
-    template <typename F>
-    void push(const F &task)
+    template <typename Func>
+    void push(const Func &func)
     {
-        tasks_total++;
+        unfinished_task_size++;
         {
-            const std::scoped_lock lock(queue_mutex);
-            tasks.push(std::function<void()>(task));
+            std::lock_guard<std::mutex> guard(queue_lock);
+            task_queue.push(std::function<void()>(func));
         }
-#ifdef USE_CONDITION_VARIABLE
-        queue_cond.notify_one();
-#endif
+        if constexpr (strategy == CONDITION_VARIABLE) {
+            queue_cond.notify_one();
+        }
     }
 
-    template <typename F, typename... A>
-    void push(const F &task, const A &...args)
+    template <typename Func, typename... Args>
+    void push(const Func &func, Args... args)
     {
-        push([task, args...] {
-            task(args...);
+        push([func, &args...] {
+            func(args...);
+        });
+    }
+
+    template <typename T, typename... Args, void (T::*Func)(Args...)>
+    void push(typename T::Func *func, Args... args)
+    {
+        push([func, &args...] {
+            func(args...);
         });
     }
 
@@ -132,21 +185,29 @@ class threadpool {
      * @brief Submit a function with zero or more arguments and no return value into the task queue, and get an
      * std::future<bool> that will be set to true upon completion of the task.
      *
-     * @tparam F The type of the function.
-     * @tparam A The types of the zero or more arguments to pass to the function.
-     * @param task The function to submit.
+     * @tparam Func The type of the function.
+     * @tparam Args The types of the zero or more arguments to pass to the function.
+     * @param func The function to submit.
      * @param args The zero or more arguments to pass to the function.
      * @return A future to be used later to check if the function has finished its execution.
      */
-    template <typename F, typename... A,
-              typename = std::enable_if_t<std::is_void_v<std::invoke_result_t<std::decay_t<F>, std::decay_t<A>...>>>>
-    std::future<bool> submit(const F &task, const A &...args)
+    template <
+        typename Func, typename... Args,
+        typename = std::enable_if<std::is_void_v<std::invoke_result_t<std::decay_t<Func>, std::decay_t<Args>...>>>>
+    std::future<bool> submit(const Func &func, Args... args)
     {
         std::shared_ptr<std::promise<bool>> promise(new std::promise<bool>);
         std::future<bool> future = promise->get_future();
-        push([task, args..., promise] {
-            task(args...);
-            promise->set_value(true);
+        push([func, args..., promise] {
+            try {
+                func(args...);
+                promise->set_value(true);
+            } catch (...) {
+                try {
+                    promise->set_exception(std::current_exception());
+                } catch (...) {
+                }
+            }
         });
         return future;
     }
@@ -155,128 +216,99 @@ class threadpool {
      * @brief Submit a function with zero or more arguments and a return value into the task queue, and get a future for
      * its eventual returned value.
      *
-     * @tparam F The type of the function.
-     * @tparam A The types of the zero or more arguments to pass to the function.
-     * @tparam R The return type of the function.
-     * @param task The function to submit.
+     * @tparam Func The type of the function.
+     * @tparam Args The types of the zero or more arguments to pass to the function.
+     * @tparam Result The return type of the function.
+     * @param func The function to submit.
      * @param args The zero or more arguments to pass to the function.
      * @return A future to be used later to obtain the function's returned value, waiting for it to finish its execution
      * if needed.
      */
-    template <typename F, typename... A, typename R = std::invoke_result_t<std::decay_t<F>, std::decay_t<A>...>,
-              typename = std::enable_if_t<!std::is_void_v<R>>>
-    std::future<R> submit(const F &task, const A &...args)
+    template <typename Func, typename... Args,
+              typename Result = std::invoke_result_t<std::decay_t<Func>, std::decay_t<Args>...>,
+              typename = std::enable_if_t<!std::is_void_v<Result>>>
+    std::future<Result> submit(const Func &func, Args... args)
     {
-        std::shared_ptr<std::promise<R>> promise(new std::promise<R>);
-        std::future<R> future = promise->get_future();
-        push([task, args..., promise] {
-            promise->set_value(task(args...));
+        std::shared_ptr<std::promise<Result>> promise(new std::promise<Result>);
+        std::future<Result> future = promise->get_future();
+        push([func, &args..., promise] {
+            try {
+                promise->set_value(func(args...));
+            } catch (...) {
+                try {
+                    promise->set_exception(std::current_exception());
+                } catch (...) {
+                }
+            }
         });
         return future;
     }
 
+  public:
+    void __worker()
+    {
+        while (true) {
+            if constexpr (strategy == CONDITION_VARIABLE) {
+                std::function<void()> func;
+                {
+                    std::unique_lock<std::mutex> lock(queue_lock);
+                    queue_cond.wait(lock, [this] {
+                        return stopped || (!paused && !task_queue.empty());
+                    });
+                    if (stopped && task_queue.empty()) {
+                        return;
+                    }
+
+                    func = std::move(task_queue.front());
+                    task_queue.pop();
+                }
+
+                func();
+                unfinished_task_size--;
+            } else {
+                auto pop_task = [&](std::function<void()> &func) {
+                    std::lock_guard<std::mutex> guard(queue_lock);
+                    if (paused || task_queue.empty()) {
+                        return false;
+                    } else {
+                        func = std::move(task_queue.front());
+                        task_queue.pop();
+                        return true;
+                    }
+                };
+
+                std::function<void()> func;
+                if (pop_task(func)) {
+                    func();
+                    unfinished_task_size--;
+                } else if (!stopped) {
+                    if constexpr (strategy == THREAD_YIELD) {
+                        std::this_thread::yield();
+                    } else {
+                        std::this_thread::sleep_for(std::chrono::microseconds(duration));
+                    }
+                } else {
+                    return;
+                }
+            }
+        }
+    }
+
     /**
-     * @brief An atomic variable indicating to the workers to pause. When set to true, the workers temporarily stop
+     * An atomic variable indicating to the workers to pause. When set to true, the workers temporarily stop
      * popping new tasks out of the queue, although any tasks already executed will keep running until they are done.
      * Set to false again to resume popping tasks.
      */
-    std::atomic<bool> paused = false;
+    std::atomic<bool> paused;
+    std::atomic<bool> stopped;
 
-#ifndef USE_CONDITION_VARIABLE
-    /**
-     * @brief The duration, in microseconds, that the worker function should sleep for when it cannot find any tasks in
-     * the queue. If set to 0, then instead of sleeping, the worker function will execute std::this_thread::yield() if
-     * there are no tasks in the queue. The default value is 1000.
-     */
-    size_type sleep_duration = 1000;
-#endif
-
-  private:
-#ifndef USE_CONDITION_VARIABLE
-    /**
-     * @brief Try to pop a new task out of the queue.
-     *
-     * @param task A reference to the task. Will be populated with a function if the queue is not empty.
-     * @return true if a task was found, false if the queue is empty.
-     */
-    bool pop(std::function<void()> &task)
-    {
-        const std::scoped_lock lock(queue_mutex);
-        if (tasks.empty())
-            return false;
-        else {
-            task = std::move(tasks.front());
-            tasks.pop();
-            return true;
-        }
-    }
-#endif
-
-    /**
-     * @brief Sleep for sleep_duration microseconds. If that variable is set to zero, yield instead.
-     *
-     */
-    inline void __idle()
-    {
-#ifndef USE_CONDITION_VARIABLE
-        if (sleep_duration) {
-            std::this_thread::sleep_for(std::chrono::microseconds(sleep_duration));
-        } else {
-            std::this_thread::yield();
-        }
-#else
-        std::unique_lock<std::mutex> lock(this->queue_mutex);
-        queue_cond.wait(lock, [this] {
-            return shutdown || !tasks.empty();
-        });
-#endif
-    }
-
-
-    void worker()
-    {
-#ifdef USE_CONDITION_VARIABLE
-        for (;;) {
-#else
-        while (!shutdown) {
-#endif
-            std::function<void()> task;
-
-#ifndef USE_CONDITION_VARIABLE
-            if (!paused && pop(task)) {
-                task();
-                tasks_total--;
-            } else {
-                __idle();
-            }
-#else
-            {
-                std::unique_lock<std::mutex> lock(this->queue_mutex);
-                queue_cond.wait(lock, [this] {
-                    return shutdown || !tasks.empty();
-                });
-                if (shutdown && tasks.empty()) return;
-
-                task = std::move(tasks.front());
-                tasks.pop();
-            }
-
-            task();
-            tasks_total--;
-#endif
-        }
-    }
-
-    std::atomic<bool> shutdown = false;
-    std::atomic<size_type> tasks_total = 0;
-
-    mutable std::mutex queue_mutex;
-    std::queue<std::function<void()>> tasks;
-#ifdef USE_CONDITION_VARIABLE
-    mutable std::condition_variable queue_cond;
-#endif
-
-    size_type worker_count;
+    const size_type concurrency;
     std::unique_ptr<std::thread[]> workers;
+
+    mutable std::mutex queue_lock;
+    mutable std::condition_variable queue_cond;
+    std::queue<std::function<void()>> task_queue;
+
+    std::atomic<size_type> unfinished_task_size; /* number of tasks that not finished, queued or running */
 };
 } // namespace multiprocessing

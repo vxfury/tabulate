@@ -12,6 +12,7 @@ import typing
 import itertools
 import argparse
 import string
+import math
 import tty
 import ctypes
 import termios
@@ -123,7 +124,7 @@ class ProgressBar:
                 # `CSI n k`: Erases part of the line
                 outputs += "\x1B[2K"  # n=2, clear entire line
             else:
-                outputs += "\x1B[E\r"
+                outputs += "\x1B[E"
             if not self.__keep_cursor_hidden:
                 # `CSI ? 25 h``: Shows the cursor
                 outputs += "\x1B[?25h"
@@ -204,12 +205,14 @@ class ProgressBar:
         self.__display()
 
     def __display(self):
-        def format_seconds(t):
+        def format_time(t):
             """
             Formats a number of seconds as a clock time, [H:]MM:SS
             """
             mins, s = divmod(int(t), 60)
             h, m = divmod(mins, 60)
+            if mins == 0 and t > 0.1 and s == 0:
+                s = 1
             if h:
                 return "{0:d}:{1:02d}:{2:02d}".format(h, m, s)
             else:
@@ -240,9 +243,9 @@ class ProgressBar:
             self.__kwargs["progress"] = "{0:5.1f}%".format(self.progress)
             self.__kwargs["bar"] = format_bar(self.progress, self.bar_width)
 
-            self.__kwargs["elapsed"] = format_seconds(now - self.__starttime)
+            self.__kwargs["elapsed"] = format_time(now - self.__starttime)
             self.__kwargs["remaining"] = (
-                format_seconds((now - self.__starttime) * (100 - self.progress) / self.progress)
+                format_time((now - self.__starttime) * (100 - self.progress) / self.progress)
                 if self.progress
                 else "--:--"
             )
@@ -330,7 +333,7 @@ class ProgressBars:
             )
             offset = 1
         else:
-            self.overall = None  # pass
+            self.overall = None
 
         self.bars = [
             ProgressBar(
@@ -351,21 +354,18 @@ class ProgressBars:
         self.initial_pos = initial_pos
 
     def __del__(self):
+        off = 0 if self.overall is None else 1
         if self.__leave:
-            off = len(self.bars)
+            off += len(self.bars)
             self.bars = []
         else:
-            off = 0
-            for bar in self.bars:
-                bar.clear()
-
-        off += 0 if self.overall is None else 1
+            [bar.clear() for bar in self.bars]
 
         if not self.disable:
             outputs = ""
             if self.initial_pos:
                 # `CSI n ; m H`: Moves the cursor to row n, column m
-                outputs += f"\x1b[s\x1B[{self.initial_pos[0] + off};{self.initial_pos[1]}H\x1B[2K\r"
+                outputs += f"\x1B[2K\x1B[{self.initial_pos[0] + off};{self.initial_pos[1]}H"
 
             outputs += "\x1B[?25h"
             sys.stdout.write(outputs)
@@ -633,9 +633,9 @@ def repo_format_main(initial_pos):
         "repository, without altering future blame results"
     )
 
-    parser.add_argument("--repo", required=False, help="path of Git repository")
+    parser.add_argument("--repo", required=False, help="path to git repository, sub-path is acceptable")
     parser.add_argument("--path", required=False, help="path to format, default is path to repo")
-    parser.add_argument("--exclude", required=False, help="exclude path, must be directory path")
+    parser.add_argument("--exclude", required=False, help="directory don't format")
 
     parser.add_argument("--no-commit", "-n", action="store_true", help="no commit, just format file")
 
@@ -659,13 +659,16 @@ def repo_format_main(initial_pos):
         help="quiet mode",
     )
     parser.add_argument("--author", required=False, default=os.getlogin(), help="author for unkown commits")
+    parser.add_argument(
+        "--filter-by-author", required=False, default=None, help="only format commits by specified author"
+    )
 
     # BEGIN OF MAIN: validate given arguments.
     args = parser.parse_args()
     if args.copyright is not None:
         COPYRIGHT = args.copyright
 
-    repo = git.Repo(args.repo) if args.repo else None
+    repo = git.Repo(args.repo, search_parent_directories=True) if args.repo else None
     format_path = os.path.expanduser(args.repo if args.path is None else args.path)
     if not os.path.isabs(format_path):
         format_path = os.path.join(os.getcwd(), format_path)
@@ -674,14 +677,19 @@ def repo_format_main(initial_pos):
     if os.path.isdir(format_path):
         for root, dirs, file_list in os.walk(format_path):
 
-            def in_sub_path(super_path, sub_path):
-                return os.path.abspath(os.path.expanduser(sub_path)).startswith(
-                    os.path.abspath(os.path.expanduser(super_path))
-                )
+            def need_exclude(root, excludes):
+                for dir in excludes:
+                    if os.path.abspath(os.path.join(format_path, dir)).startswith(
+                        os.path.abspath(os.path.expanduser(root))
+                    ):
+                        return True
 
-            if args.exclude is not None and in_sub_path(args.exclude, root):
-                print(f"exclude {root}")
+                return False
+
+            if args.exclude and need_exclude(root, args.exclude.split(",")):
+                # print(f"Exclude {root}, {args.exclude}")
                 continue
+
             for filename in file_list:
                 if filename.endswith((".cpp", ".cc", ".h", ".hpp", ".c")):
                     files.append(os.path.join(root, filename))
@@ -744,6 +752,8 @@ def repo_format_main(initial_pos):
         for author, commits_by_author in affected_commits_by_authors.items():
             affected_commits = set()
             replacements = []
+            if args.filter_by_author and author != author:
+                continue
             for one_commit in commits_by_author:
                 affected_commits.add(one_commit)
                 replacements.extend(replacements_by_affected_commits[one_commit])
@@ -858,9 +868,11 @@ def progress_bars_main(initial_pos):
 
 
 if __name__ == "__main__":
-    repo_format_main(ProgressBar.getpos())
+    initial_pos = ProgressBar.getpos()
+    # initial_pos = (initial_pos[0] - 1, initial_pos[1])
+    repo_format_main(initial_pos)
     # progress_bar_main()
-    # progress_bars_main(ProgressBar.getpos())
+    # progress_bars_main(initial_pos)
 
 """ .clang-format
 ---
@@ -989,7 +1001,7 @@ SpacesInContainerLiterals: 'false'
 SpacesInParentheses: 'false'
 SpacesInSquareBrackets: 'false'
 Standard: Auto
-StatementMacros: ['CRPT_UNUSED', '__maybe_unused']
+StatementMacros: ['__maybe_unused']
 TabWidth: '4'
 UseTab: Never
 ...
