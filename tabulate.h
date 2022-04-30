@@ -44,24 +44,24 @@ constexpr typename std::underlying_type<E>::type to_underlying(E e) noexcept
     return static_cast<typename std::underlying_type<E>::type>(e);
 }
 #define XCONCAT(a, b) __CONCAT(a, b)
-#define PLACEHOLDER   XCONCAT(resevred_, __COUNTER__)
+#define RESERVED      XCONCAT(resevred_, __COUNTER__)
 
 enum class Align { none, left, right, center, top, bottom };
 
-enum class Color { black, red, green, yellow, blue, magenta, cyan, white, PLACEHOLDER, none };
+enum class Color { black, red, green, yellow, blue, magenta, cyan, white, RESERVED, none };
 
 enum class Style {
     // 0 - 9
-    none,        // default, VT100
-    bold,        // bold, VT100
-    faint,       // decreased intensity
-    italic,      // italicized
-    underline,   // underlined
-    blink,       // blink, VT100
-    PLACEHOLDER, // placeholder for underlying_type
-    inverse,     // inverse, VT100
-    invisible,   // hidden
-    crossed,     // crossed-out chracters
+    none,      // default, VT100
+    bold,      // bold, VT100
+    faint,     // decreased intensity
+    italic,    // italicized
+    underline, // underlined
+    blink,     // blink, VT100
+    RESERVED,  // placeholder for underlying_type
+    inverse,   // inverse, VT100
+    invisible, // hidden
+    crossed,   // crossed-out chracters
 
     // 21 - 29
     doubly_underline, // doubly underlined
@@ -69,7 +69,7 @@ enum class Style {
     not_italic,       // not italicized
     not_underline,    // not underlined
     steady,           // not blinking
-    PLACEHOLDER,      // placeholder for underlying_type
+    RESERVED,         // placeholder for underlying_type
     positive,         // not inverse
     visible,          // not hidden
     not_crossed,      // not crossed-out
@@ -488,7 +488,7 @@ static std::string stringformatter(const std::string &str, TrueColor foreground_
         };
 
         auto style_code = [](Style style) -> unsigned int {
-            // @PLACEHOLDER
+            // @RESERVED
             unsigned int i = to_underlying(style);
             switch (i) {
                 case 0 ... 9: // 0 - 9
@@ -549,6 +549,7 @@ static std::string borderformatter(const Cell *left, const Cell *right)
 {
     assert(left != nullptr || right != nullptr);
     if (right == nullptr) {
+        return "";
     } else if (left == nullptr) {
         // right
     } else {
@@ -2095,7 +2096,7 @@ class Column {
 
 class Table {
   public:
-    Table() : formats(cells) {}
+    Table(const std::string &title = "") : title(title), formats(cells) {}
 
     template <typename... Args>
     Table(Args... args) : formats(cells)
@@ -2204,13 +2205,30 @@ class Table {
         return column;
     }
 
-    size_t column_size()
+    size_t column_size() const
     {
         size_t max_size = 0;
         for (auto const &row : rows) {
             max_size = std::max(max_size, row->size());
         }
         return max_size;
+    }
+
+    size_t width() const
+    {
+        size_t size = 0;
+        for (auto const &cell : *rows[0]) {
+            auto &format = cell.format();
+            if (format.borders.left.visiable) {
+                size += compute_width(format.borders.left.content, format.locale(), true);
+            }
+            size += format.borders.left.padding + cell.width() + format.borders.right.padding;
+            if (format.borders.right.visiable) {
+                size += compute_width(format.borders.right.content, format.locale(), true);
+            }
+        }
+
+        return size;
     }
 
     // TODO: merge cells
@@ -2224,6 +2242,9 @@ class Table {
         if (rows.size() > 0) {
             const auto &header = *rows[0];
             const Format &format = header[0].format();
+            if (!title.empty()) {
+                exported += std::string((width() - title.size()) / 2, ' ') + title + newline;
+            }
             if (format.borders.top.visiable) {
                 exported += header.border_top(xterm::stringformatter) + newline;
             }
@@ -2310,6 +2331,7 @@ class Table {
     }
 
   private:
+    std::string title;
     BatchFormat formats;
     std::vector<std::shared_ptr<Row>> rows;
     std::vector<std::shared_ptr<Cell>> cells; // for batch format

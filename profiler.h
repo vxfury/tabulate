@@ -208,9 +208,9 @@ class ProfilerCache {
          * awk '/BEGIN/{ f = 1; next } /END/{ f = 0 } f' all-formats.txt
          *
          */
-        std::cout << "-----BEGIN XTERN TABLE-----" << std::endl;
+        std::cout << "-----BEGIN XTERM TABLE-----" << std::endl;
         std::cout << table.xterm() << std::endl;
-        std::cout << "-----END XTERN TABLE-----" << std::endl;
+        std::cout << "-----END XTERM TABLE-----" << std::endl;
 
         std::cout << "-----BEGIN MARKDOWN TABLE-----" << std::endl;
         std::cout << table.markdown() << std::endl;
