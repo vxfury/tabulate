@@ -98,6 +98,11 @@ class ProfilerCache {
         }
     }
 
+    void set_title(std::string title)
+    {
+        this->title = std::move(title);
+    }
+
   private:
     struct ProfileData {
         double avg;
@@ -115,6 +120,7 @@ class ProfilerCache {
             }
         }
     };
+    std::string title;
     std::vector<ProfileData> references;
     std::vector<ProfileData> collections;
 
@@ -199,7 +205,7 @@ class ProfilerCache {
     ProfilerCache() {}
     ~ProfilerCache()
     {
-        tabulate::Table table;
+        tabulate::Table table(title);
         make_summary_table(table);
 
         /**
