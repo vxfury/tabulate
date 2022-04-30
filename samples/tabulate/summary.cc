@@ -20,14 +20,10 @@ using namespace tabulate;
 int main()
 {
     Table readme;
-    {
-        Row &row = readme.add("tabulate for Modern C++");
-        row.format().align(Align::center).color(Color::yellow);
-    }
-
+    readme.set_title("tabulate for Modern C++");
     {
         Row &row = readme.add("https://github.com/vxfury/tabulate");
-        row.format().color(Color::white).align(Align::center).styles(Style::underline, Style::italic).hide_border_top();
+        row.format().color(Color::white).align(Align::center).styles(Style::underline, Style::italic);
     }
 
     {
@@ -114,6 +110,7 @@ int main()
                 )
             )
         );
+        embedded_table.format().align(Align::center);
         // clang-format on
 
         {
@@ -171,39 +168,12 @@ int main()
         }
 
         chart.column(2).format().border_color(Color::white).border_left("|").border_top("-");
-        chart.column(2)[8].format().background_color(Color::red);
-        chart.column(2)[7].format().background_color(Color::red);
-
-        chart.column(3)[8].format().background_color(Color::yellow);
-        chart.column(3)[7].format().background_color(Color::yellow);
-        chart.column(3)[6].format().background_color(Color::yellow);
-
-        chart.column(6)[8].format().background_color(Color::red);
-        chart.column(6)[7].format().background_color(Color::red);
-        chart.column(6)[6].format().background_color(Color::red);
-        chart.column(6)[5].format().background_color(Color::red);
-
-        chart.column(7)[8].format().background_color(Color::yellow);
-        chart.column(7)[7].format().background_color(Color::yellow);
-        chart.column(7)[6].format().background_color(Color::yellow);
-        chart.column(7)[5].format().background_color(Color::yellow);
-        chart.column(7)[4].format().background_color(Color::yellow);
-
-        chart.column(10)[8].format().background_color(Color::red);
-        chart.column(10)[7].format().background_color(Color::red);
-        chart.column(10)[6].format().background_color(Color::red);
-        chart.column(10)[5].format().background_color(Color::red);
-        chart.column(10)[4].format().background_color(Color::red);
-        chart.column(10)[3].format().background_color(Color::red);
-
-        chart.column(11)[8].format().background_color(Color::yellow);
-        chart.column(11)[7].format().background_color(Color::yellow);
-        chart.column(11)[6].format().background_color(Color::yellow);
-        chart.column(11)[5].format().background_color(Color::yellow);
-        chart.column(11)[4].format().background_color(Color::yellow);
-        chart.column(11)[3].format().background_color(Color::yellow);
-        chart.column(11)[2].format().background_color(Color::yellow);
-        chart.column(11)[1].format().background_color(Color::yellow);
+        chart.column(2).format(7, 8).background_color(Color::red);
+        chart.column(3).format(5, 8).background_color(Color::yellow);
+        chart.column(6).format(5, 8).background_color(Color::red);
+        chart.column(7).format(4, 8).background_color(Color::yellow);
+        chart.column(10).format(3, 8).background_color(Color::red);
+        chart.column(11).format(1, 8).background_color(Color::yellow);
 
         chart[2][15].format().background_color(Color::red);
         chart[2][16].set("Batch 1");

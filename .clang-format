@@ -126,7 +126,7 @@ SpacesInContainerLiterals: 'false'
 SpacesInParentheses: 'false'
 SpacesInSquareBrackets: 'false'
 Standard: Auto
-StatementMacros: ['CRPT_UNUSED', '__maybe_unused']
+StatementMacros: ['__maybe_unused']
 TabWidth: '4'
 UseTab: Never
 ...

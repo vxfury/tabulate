@@ -15,7 +15,6 @@
  */
 
 #include "tabulate.h"
-using namespace tabulate;
 
 int main()
 {
@@ -27,17 +26,17 @@ int main()
     movies.add("tt1535109", "Captain Phillips", "Paul Greengrass", 55000000, " 11 October 2013");
 
     // center align 'Director' column
-    movies.column(2).format().align(Align::center);
+    movies.column(2).format().align(tabulate::Align::center);
 
     // right align 'Estimated Budget' column
-    movies.column(3).format().align(Align::right);
+    movies.column(3).format().align(tabulate::Align::right);
 
     // right align 'Release Date' column
-    movies.column(4).format().align(Align::right);
+    movies.column(4).format().align(tabulate::Align::right);
 
     // Color header cells
     for (size_t i = 0; i < movies.column_size(); ++i) {
-        movies[0][i].format().color(Color::yellow).styles(Style::bold);
+        movies[0][i].format().color(tabulate::Color::yellow).styles(tabulate::Style::bold);
     }
 
     std::cout << movies.xterm() << std::endl;

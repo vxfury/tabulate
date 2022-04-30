@@ -205,6 +205,7 @@ int main()
     for (size_t i = 18; i < 29; ++i) {
         mario[15][i].format().color(Color::green).styles(Style::faint);
     }
+    mario.format().multi_bytes_character(true);
 
     std::cout << mario.xterm() << "\n";
 }
