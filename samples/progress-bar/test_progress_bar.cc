@@ -50,26 +50,28 @@ class timer {
     {
         unsigned long utime, stime;
         long int sutime, cstime, num_threads;
+
+        auto format_time = [](double t) -> std::string {
+            std::stringstream ss;
+            ss.precision(3);
+            ss << t;
+            return ss.str();
+        };
         if (get_process_details(&utime, &stime, &sutime, &cstime, &num_threads) == 0) {
             utime -= utime_last;
             stime -= stime_last;
             sutime -= sutime_last;
             cstime -= cstime_last;
-            auto format_time = [](double t) -> std::string {
-                std::stringstream ss;
-                ss.precision(3);
-                ss << t;
-                return ss.str();
-            };
             double sysclk = static_cast<double>(sysconf(_SC_CLK_TCK));
             return "real: " + format_time(std::chrono::duration<double>(clock::now() - starttime).count())
                    + "s, user mode: " + format_time(utime / sysclk) + " s, kernel mode: " + format_time(stime / sysclk)
                    + " s, chirdren(user mode): " + format_time(sutime / sysclk)
                    + " s, chirdren(kernel mode): " + format_time(cstime / sysclk) + " s, threads: ("
                    + std::to_string(num_threads) + ", " + std::to_string(num_threads_last) + ")";
+        } else {
+            return "Time Elapsed: " + format_time(std::chrono::duration<double>(clock::now() - starttime).count())
+                   + " s.";
         }
-
-        return "<Not avaliable>";
     }
 
   private:
