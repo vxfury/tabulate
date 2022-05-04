@@ -17,6 +17,7 @@
 #include <chrono>
 #include <sstream>
 #include <iostream>
+#include <sys/times.h>
 #include "threadpool.h"
 #include "progress-bar.h"
 
@@ -42,83 +43,35 @@ class timer {
 
     void reset()
     {
-        starttime = clock::now();
-        get_process_details(&utime_last, &stime_last, &sutime_last, &cstime_last, &num_threads_last);
+        starttime = times(&last);
     }
 
     std::string description() const
     {
-        unsigned long utime, stime;
-        long int sutime, cstime, num_threads;
-
         auto format_time = [](double t) -> std::string {
             std::stringstream ss;
             ss.precision(3);
             ss << t;
             return ss.str();
         };
-        if (get_process_details(&utime, &stime, &sutime, &cstime, &num_threads) == 0) {
-            utime -= utime_last;
-            stime -= stime_last;
-            sutime -= sutime_last;
-            cstime -= cstime_last;
-            double sysclk = static_cast<double>(sysconf(_SC_CLK_TCK));
-            return "real: " + format_time(std::chrono::duration<double>(clock::now() - starttime).count())
-                   + "s, user mode: " + format_time(utime / sysclk) + " s, kernel mode: " + format_time(stime / sysclk)
-                   + " s, chirdren(user mode): " + format_time(sutime / sysclk)
-                   + " s, chirdren(kernel mode): " + format_time(cstime / sysclk) + " s, threads: ("
-                   + std::to_string(num_threads) + ", " + std::to_string(num_threads_last) + ")";
-        } else {
-            return "Time Elapsed: " + format_time(std::chrono::duration<double>(clock::now() - starttime).count())
-                   + " s.";
-        }
+
+        struct tms buf;
+        clock_t endtime = times(&buf);
+        buf.tms_utime -= last.tms_utime;
+        buf.tms_stime -= last.tms_stime;
+        buf.tms_cutime -= last.tms_cutime;
+        buf.tms_cstime -= last.tms_cstime;
+
+        double sysclk = static_cast<double>(sysconf(_SC_CLK_TCK));
+        return "real: " + format_time((endtime - starttime) / sysclk) + "s, user mode: "
+               + format_time(buf.tms_utime / sysclk) + " s, kernel mode: " + format_time(buf.tms_stime / sysclk)
+               + " s, chirdren(user mode): " + format_time(buf.tms_cutime / sysclk)
+               + " s, chirdren(kernel mode): " + format_time(buf.tms_cstime / sysclk) + " s";
     }
 
   private:
-    unsigned long utime_last, stime_last;
-    long int sutime_last, cstime_last, num_threads_last;
-    std::chrono::time_point<std::chrono::high_resolution_clock> starttime;
-
-    static int get_process_details(unsigned long *putime, unsigned long *pstime, long int *psutime, long int *pcstime,
-                                   long int *pnthreads)
-    {
-        int fd;
-        char filename[256];
-        sprintf(filename, "/proc/%i/stat", getpid());
-        if ((fd = open(filename, O_RDONLY)) >= 0) {
-            int size;
-            char proc_stat[512];
-            if ((size = read(fd, proc_stat, sizeof(proc_stat))) > 0) {
-                const char *spcifiers =
-                    "%*d %*s %*c %*d %*d %*d %*d %*d %*lu %*lu %*lu %*lu %*lu %lu %lu %ld %ld %*ld %*ld %ld";
-                sscanf(proc_stat, spcifiers,
-                       putime,   // (14)  Amount of time that this process has been scheduled in user mode, mea‐
-                                 //   sured in clock ticks (divide by sysconf(_SC_CLK_TCK)).  This includes  guest
-                                 //   time,  guest_time  (time  spent  running  a virtual CPU, see below), so that
-                                 //   applications that are not aware of the guest time field  do  not  lose  that
-                                 //   time from their calculations.
-                       pstime,   // (15)  Amount  of  time  that this process has been scheduled in kernel mode,
-                                 // measured in clock ticks (divide by sysconf(_SC_CLK_TCK)).
-                       psutime,  // (16) Amount of time that this process's waited-for children have been sched‐
-                                 //   uled in user mode, measured in clock ticks (divide by sysconf(_SC_CLK_TCK)).
-                                 //   (See also times(2).)  This includes guest time, cguest_time (time spent run‐
-                                 //   ning a virtual CPU, see below).
-                       pcstime,  // (17) Amount of time that this process's waited-for children have been sched‐
-                                 //   uled   in   kernel   mode,   measured   in   clock    ticks    (divide    by
-                                 //   sysconf(_SC_CLK_TCK)).
-                       pnthreads // (20) Number of threads in this process (since  Linux  2.6).   Before  kernel
-                                 //   2.6,  this field was hard coded to 0 as a placeholder for an earlier removed
-                                 //   field.
-                );
-            }
-
-            close(fd);
-        } else {
-            return -errno;
-        }
-
-        return 0;
-    }
+    struct tms last;
+    clock_t starttime;
 };
 
 
@@ -131,7 +84,7 @@ int main(int argc, char **argv)
         pause_enabled = true;
     }
 
-    {
+    if (0) {
         ProgressBar bar;
         for (int i = 0; i < 100; i++) {
             bar.advance(1);
