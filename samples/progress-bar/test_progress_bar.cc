@@ -30,7 +30,7 @@ int getch_noblocking(void)
     return select(1, &rfds, NULL, NULL, &tv) >= 1 ? getchar() : -1;
 }
 
-int main(int argc, char **argv)
+int main(int, char **)
 {
     srand(time(nullptr));
 
@@ -62,7 +62,7 @@ int main(int argc, char **argv)
                 };
 
                 multiprocessing::threadpool<> pool(18);
-                for (int i = 0; i < max_steps; i++) {
+                for (size_t i = 0; i < max_steps; i++) {
                     auto &bar = bars[i];
                     pool.push([&, i]() {
                         progress_bar_test(i, rand() % 9001 + 1000, bar);

@@ -85,6 +85,30 @@ class threadpool {
         }
     }
 
+    void wait()
+    {
+        while (true) {
+            if (!paused) {
+                if (unfinished_task_size == 0) break;
+            } else {
+                if (get_task_size_running() == 0) break;
+            }
+
+            if constexpr (strategy == CONDITION_VARIABLE) {
+                std::unique_lock<std::mutex> lock(queue_lock);
+                queue_cond.wait(lock, [this] {
+                    return stopped || (!paused || !task_queue.empty());
+                });
+            }
+            if constexpr (strategy == THREAD_YIELD) {
+                std::this_thread::yield();
+            }
+            if constexpr (strategy == SCHED_DURATION) {
+                std::this_thread::sleep_for(std::chrono::microseconds(duration));
+            }
+        }
+    }
+
     void shutdown()
     {
         if (!stopped) {
@@ -99,6 +123,14 @@ class threadpool {
         }
     }
 
+    void reset(size_type concurrency = std::thread::hardware_concurrency())
+    {
+        shutdown();
+        for (size_type i = 0; i < concurrency; i++) {
+            workers[i] = std::thread(&threadpool::__worker, this);
+        }
+    }
+
     bool is_alive()
     {
         return !stopped;
@@ -109,30 +141,55 @@ class threadpool {
         return !stopped && !paused;
     }
 
-    size_type get_tasks_running() const
+    size_type get_worker_size() const
+    {
+        return concurrency;
+    }
+
+    size_type get_task_size_unfinished() const
+    {
+        return unfinished_task_size;
+    }
+
+    size_type get_task_size_queued() const
+    {
+        std::lock_guard<std::mutex> guard(queue_lock);
+        return task_queue.size();
+    }
+
+    size_type get_task_size_running() const
     {
         std::lock_guard<std::mutex> guard(queue_lock);
         return unfinished_task_size - task_queue.size();
     }
 
-    template <typename T, typename Func>
-    void parallelize(T first_index, T last_index, const Func &loop, size_type num_tasks = 0)
+    template <typename T1, typename T2, typename Func>
+    void parallelize(T1 first_index, T2 index_after_last, const Func &loop, size_type num_blocks = 0)
     {
-        if (num_tasks == 0) num_tasks = concurrency;
-        if (last_index < first_index) std::swap(last_index, first_index);
-        size_t total_size = last_index - first_index + 1;
-        size_t block_size = total_size / num_tasks;
+        typedef std::common_type_t<T1, T2> T;
+        T the_first_index = (T)first_index;
+        T last_index = (T)index_after_last;
+        if (the_first_index == last_index) return;
+        if (last_index < the_first_index) {
+            T temp = last_index;
+            last_index = the_first_index;
+            the_first_index = temp;
+        }
+        last_index--;
+        if (num_blocks == 0) num_blocks = concurrency;
+        size_t total_size = (size_t)(last_index - the_first_index + 1);
+        size_t block_size = (size_t)(total_size / num_blocks);
         if (block_size == 0) {
             block_size = 1;
-            num_tasks = (size_type)total_size > 1 ? (size_type)total_size : 1;
+            num_blocks = (unsigned int)total_size > 1 ? (unsigned int)total_size : 1;
         }
-        std::atomic<size_type> blocks_running = 0;
-        for (size_type t = 0; t < num_tasks; t++) {
-            T start = (T)(t * block_size + first_index);
-            T end = (t == num_tasks - 1) ? last_index : (T)((t + 1) * block_size + first_index - 1);
+        std::atomic<unsigned int> blocks_running = 0;
+        for (unsigned int t = 0; t < num_blocks; t++) {
+            T start = ((T)(t * block_size) + the_first_index);
+            T end = (t == num_blocks - 1) ? last_index + 1 : ((T)((t + 1) * block_size) + the_first_index);
             blocks_running++;
             push([start, end, &loop, &blocks_running] {
-                for (T i = start; i <= end; i++) loop(i);
+                loop(start, end);
                 blocks_running--;
             });
         }
@@ -193,8 +250,8 @@ class threadpool {
      */
     template <
         typename Func, typename... Args,
-        typename = std::enable_if<std::is_void_v<std::invoke_result_t<std::decay_t<Func>, std::decay_t<Args>...>>>>
-    std::future<bool> submit(const Func &func, Args... args)
+        typename = std::enable_if_t<std::is_void_v<std::invoke_result_t<std::decay_t<Func>, std::decay_t<Args>...>>>>
+    std::future<bool> submit(const Func &func, const Args &...args)
     {
         std::shared_ptr<std::promise<bool>> promise(new std::promise<bool>);
         std::future<bool> future = promise->get_future();
@@ -227,7 +284,7 @@ class threadpool {
     template <typename Func, typename... Args,
               typename Result = std::invoke_result_t<std::decay_t<Func>, std::decay_t<Args>...>,
               typename = std::enable_if_t<!std::is_void_v<Result>>>
-    std::future<Result> submit(const Func &func, Args... args)
+    std::future<Result> submit(const Func &func, const Args &...args)
     {
         std::shared_ptr<std::promise<Result>> promise(new std::promise<Result>);
         std::future<Result> future = promise->get_future();
