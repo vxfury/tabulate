@@ -19,6 +19,7 @@
 #include <stdio.h>
 #include <fcntl.h>
 #include <unistd.h>
+#include <string.h>
 #include <assert.h>
 #include <termios.h>
 #include <sys/stat.h>
@@ -190,7 +191,9 @@ class ProgressBar {
                 outputs += leave ? "\x1B[E" : "\x1B[2K";
                 outputs += keep_cursor_hidden ? "" : "\x1B[?25h";
                 outputs += (!leave && std::get<0>(position) > 0) ? "\x1B[u" : "";
-                write(fd, outputs.c_str(), outputs.size());
+                if (write(fd, outputs.c_str(), outputs.size()) < 0) {
+                    TRACE("write failed");
+                }
                 TRACE("%s", replace_all(outputs, "\x1B", "ESC ").c_str());
             }
         }
@@ -208,7 +211,9 @@ class ProgressBar {
                 if (std::get<0>(position) > 0) {
                     outputs += "\x1B[u";
                 }
-                write(fd, outputs.c_str(), outputs.size());
+                if (write(fd, outputs.c_str(), outputs.size()) < 0) {
+                    TRACE("write failed");
+                }
                 TRACE("%s", replace_all(outputs, "\x1B", "ESC ").c_str());
             }
         }
@@ -241,7 +246,9 @@ class ProgressBar {
             if (std::get<0>(position) > 0) {
                 outputs += "\x1B[u";
             }
-            write(fd, outputs.c_str(), outputs.size());
+            if (write(fd, outputs.c_str(), outputs.size()) < 0) {
+                TRACE("write failed");
+            }
             TRACE("%s", replace_all(outputs, "\x1B", "ESC ").c_str());
         }
 
@@ -263,7 +270,7 @@ class ProgressBar {
             ts.c_lflag &= ~(ECHO | ICANON | CREAD);
             tcsetattr(fd, TCSADRAIN, &ts);
 
-            char buf[16];
+            char buf[32];
             {
                 /* How many characters in the input queue. */
                 int m = 0;
@@ -277,9 +284,14 @@ class ProgressBar {
                 char discarded[m];
                 m = read(fd, discarded, m);
 
-                write(fd, "\x1B[6n", sizeof("\x1B[6n"));
+                if (write(fd, "\x1B[6n", sizeof("\x1B[6n")) < 0) {
+                    return std::tuple<int, int>(-1, -1);
+                }
 
-                int n = read(fd, buf, 19);
+                int n = read(fd, buf, sizeof(buf));
+                if (n < 0) {
+                    return std::tuple<int, int>(-1, -1);
+                }
                 buf[n] = '\0';
 
                 ts.c_lflag |= ICANON;
@@ -437,7 +449,9 @@ class ProgressBars {
                            + std::to_string(std::get<1>(position)) + "H\x1B[2K";
             }
             outputs += "\x1B[?25h";
-            write(STDOUT_FILENO, outputs.c_str(), outputs.size());
+            if (write(STDOUT_FILENO, outputs.c_str(), outputs.size()) < 0) {
+                TRACE("write failed");
+            }
             TRACE("%s", replace_all(outputs, "\x1B", "ESC ").c_str());
         }
     }
