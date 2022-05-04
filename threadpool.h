@@ -126,6 +126,7 @@ class threadpool {
     void reset(size_type concurrency = std::thread::hardware_concurrency())
     {
         shutdown();
+        workers.reset(new std::thread[concurrency]);
         for (size_type i = 0; i < concurrency; i++) {
             workers[i] = std::thread(&threadpool::__worker, this);
         }
@@ -163,8 +164,8 @@ class threadpool {
         return unfinished_task_size - task_queue.size();
     }
 
-    template <typename T1, typename T2, typename Func>
-    void parallelize(T1 first_index, T2 index_after_last, const Func &loop, size_type num_blocks = 0)
+    template <typename T1, typename T2, typename TaskLoop>
+    void parallelize(T1 first_index, T2 index_after_last, const TaskLoop &task_loop, size_type num_blocks = 0)
     {
         typedef std::common_type_t<T1, T2> T;
         T the_first_index = (T)first_index;
@@ -188,8 +189,8 @@ class threadpool {
             T start = ((T)(t * block_size) + the_first_index);
             T end = (t == num_blocks - 1) ? last_index + 1 : ((T)((t + 1) * block_size) + the_first_index);
             blocks_running++;
-            push([start, end, &loop, &blocks_running] {
-                loop(start, end);
+            push([start, end, &task_loop, &blocks_running] {
+                task_loop(start, end);
                 blocks_running--;
             });
         }
@@ -209,32 +210,32 @@ class threadpool {
         }
     }
 
-    template <typename Func>
-    void push(const Func &func)
+    template <typename Task>
+    void push(const Task &task)
     {
         unfinished_task_size++;
         {
             std::lock_guard<std::mutex> guard(queue_lock);
-            task_queue.push(std::function<void()>(func));
+            task_queue.push(std::function<void()>(task));
         }
         if constexpr (strategy == CONDITION_VARIABLE) {
             queue_cond.notify_one();
         }
     }
 
-    template <typename Func, typename... Args>
-    void push(const Func &func, Args... args)
+    template <typename Task, typename... Args>
+    void push(const Task &task, Args... args)
     {
-        push([func, &args...] {
-            func(args...);
+        push([task, &args...] {
+            task(args...);
         });
     }
 
-    template <typename T, typename... Args, void (T::*Func)(Args...)>
-    void push(typename T::Func *func, Args... args)
+    template <typename T, typename... Args, void (T::*Task)(Args...)>
+    void push(typename T::Task *task, Args... args)
     {
-        push([func, &args...] {
-            func(args...);
+        push([task, &args...] {
+            task(args...);
         });
     }
 
@@ -242,22 +243,22 @@ class threadpool {
      * @brief Submit a function with zero or more arguments and no return value into the task queue, and get an
      * std::future<bool> that will be set to true upon completion of the task.
      *
-     * @tparam Func The type of the function.
+     * @tparam Task The type of the function.
      * @tparam Args The types of the zero or more arguments to pass to the function.
-     * @param func The function to submit.
+     * @param task The function to submit.
      * @param args The zero or more arguments to pass to the function.
      * @return A future to be used later to check if the function has finished its execution.
      */
     template <
-        typename Func, typename... Args,
-        typename = std::enable_if_t<std::is_void_v<std::invoke_result_t<std::decay_t<Func>, std::decay_t<Args>...>>>>
-    std::future<bool> submit(const Func &func, const Args &...args)
+        typename Task, typename... Args,
+        typename = std::enable_if_t<std::is_void_v<std::invoke_result_t<std::decay_t<Task>, std::decay_t<Args>...>>>>
+    std::future<bool> submit(const Task &task, const Args &...args)
     {
         std::shared_ptr<std::promise<bool>> promise(new std::promise<bool>);
         std::future<bool> future = promise->get_future();
-        push([func, args..., promise] {
+        push([task, args..., promise] {
             try {
-                func(args...);
+                task(args...);
                 promise->set_value(true);
             } catch (...) {
                 try {
@@ -273,24 +274,24 @@ class threadpool {
      * @brief Submit a function with zero or more arguments and a return value into the task queue, and get a future for
      * its eventual returned value.
      *
-     * @tparam Func The type of the function.
+     * @tparam Task The type of the function.
      * @tparam Args The types of the zero or more arguments to pass to the function.
      * @tparam Result The return type of the function.
-     * @param func The function to submit.
+     * @param task The function to submit.
      * @param args The zero or more arguments to pass to the function.
      * @return A future to be used later to obtain the function's returned value, waiting for it to finish its execution
      * if needed.
      */
-    template <typename Func, typename... Args,
-              typename Result = std::invoke_result_t<std::decay_t<Func>, std::decay_t<Args>...>,
+    template <typename Task, typename... Args,
+              typename Result = std::invoke_result_t<std::decay_t<Task>, std::decay_t<Args>...>,
               typename = std::enable_if_t<!std::is_void_v<Result>>>
-    std::future<Result> submit(const Func &func, const Args &...args)
+    std::future<Result> submit(const Task &task, const Args &...args)
     {
         std::shared_ptr<std::promise<Result>> promise(new std::promise<Result>);
         std::future<Result> future = promise->get_future();
-        push([func, &args..., promise] {
+        push([task, &args..., promise] {
             try {
-                promise->set_value(func(args...));
+                promise->set_value(task(args...));
             } catch (...) {
                 try {
                     promise->set_exception(std::current_exception());
@@ -306,7 +307,7 @@ class threadpool {
     {
         while (true) {
             if constexpr (strategy == CONDITION_VARIABLE) {
-                std::function<void()> func;
+                std::function<void()> task;
                 {
                     std::unique_lock<std::mutex> lock(queue_lock);
                     queue_cond.wait(lock, [this] {
@@ -316,27 +317,27 @@ class threadpool {
                         return;
                     }
 
-                    func = std::move(task_queue.front());
+                    task = std::move(task_queue.front());
                     task_queue.pop();
                 }
 
-                func();
+                task();
                 unfinished_task_size--;
             } else {
-                auto pop_task = [&](std::function<void()> &func) {
+                auto pop_task = [&](std::function<void()> &task) {
                     std::lock_guard<std::mutex> guard(queue_lock);
                     if (paused || task_queue.empty()) {
                         return false;
                     } else {
-                        func = std::move(task_queue.front());
+                        task = std::move(task_queue.front());
                         task_queue.pop();
                         return true;
                     }
                 };
 
-                std::function<void()> func;
-                if (pop_task(func)) {
-                    func();
+                std::function<void()> task;
+                if (pop_task(task)) {
+                    task();
                     unfinished_task_size--;
                 } else if (!stopped) {
                     if constexpr (strategy == THREAD_YIELD) {

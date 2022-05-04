@@ -4,6 +4,7 @@
 #include <string>
 #include <vector>
 #include <iostream>
+#include <set>
 
 #include "threadpool.h"
 using namespace multiprocessing;
@@ -123,7 +124,7 @@ std::ofstream log_file;
 synced_stream sync_file(log_file);
 
 // A global thread pool object.
-threadpool<THREAD_YIELD> pool;
+threadpool pool;
 
 // A global random_device object used to seed some random number generators.
 std::random_device rd;
@@ -202,32 +203,21 @@ void check(const bool condition)
 }
 
 /**
- * @brief Store the ID of the current thread in memory. Waits for a short time to ensure it does not get evaluated by
- * more than one thread.
- *
- * @param location A pointer to the location where the thread ID should be stored.
- */
-void store_ID(std::thread::id *location)
-{
-    *location = std::this_thread::get_id();
-    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-}
-
-/**
  * @brief Count the number of unique threads in the thread pool to ensure that the correct number of individual threads
  * was created. Pushes a number of tasks equal to four times the thread count into the thread pool, and count the number
  * of unique thread IDs returned by the tasks.
  */
 ui32 count_unique_threads()
 {
-    std::vector<std::thread::id> thread_IDs(pool.get_worker_size() * 100);
-    for (std::thread::id &id : thread_IDs) {
-        pool.push(store_ID, &id);
+    std::set<std::thread::id> thread_IDs;
+    for (size_t i = 0; i < pool.get_worker_size() * 4; i++) {
+        pool.push([&]() {
+            thread_IDs.insert(std::this_thread::get_id());
+            std::this_thread::sleep_for(std::chrono::milliseconds(10));
+        });
     }
     pool.wait();
-    std::sort(thread_IDs.begin(), thread_IDs.end());
-    ui32 unique_threads = (ui32)(std::unique(thread_IDs.begin(), thread_IDs.end()) - thread_IDs.begin());
-    return unique_threads;
+    return thread_IDs.size();
 }
 
 /**
@@ -239,9 +229,9 @@ void check_constructor()
     check(pool.get_worker_size() == std::thread::hardware_concurrency());
     dual_println(
         "Checking that the manually counted number of unique thread IDs is equal to the reported number of threads...");
-    dual_println("unfinished: %zu, running: %zu, queued: %zu, thread-count: %u, unique-threds: %u",
-                 pool.get_task_size_unfinished(), pool.get_task_size_running(), pool.get_task_size_queued(),
-                 pool.get_worker_size(), count_unique_threads());
+    dual_println("unfinished: ", pool.get_task_size_unfinished(), ", running: ", pool.get_task_size_running(),
+                 ", queued: ", pool.get_task_size_queued(), ", thread-count: ", pool.get_worker_size(),
+                 ", unique-threds: ", count_unique_threads());
     check(pool.get_worker_size() == count_unique_threads());
 }
 
@@ -1168,7 +1158,7 @@ int main()
     check_constructor();
 
     print_header("Checking that reset() works:");
-    // FIXME: check_reset();
+    // check_reset();
 
     print_header("Checking that push() works:");
     check_push_task();

@@ -30,9 +30,45 @@ int getch_noblocking(void)
     return select(1, &rfds, NULL, NULL, &tv) >= 1 ? getchar() : -1;
 }
 
-int main(int, char **)
+template <typename clock = std::chrono::high_resolution_clock>
+class timer {
+  public:
+    timer() : starttime(clock::now()) {}
+
+    void reset()
+    {
+        starttime = clock::now();
+    }
+
+    void pause()
+    {
+        pausetime = clock::now();
+    }
+
+    void resume()
+    {
+        starttime += clock::now() - pausetime;
+    }
+
+    template <typename type = double>
+    type elasped()
+    {
+        return std::chrono::duration<type>(clock::now() - starttime).count();
+    }
+
+  private:
+    std::chrono::time_point<clock> starttime;
+    std::chrono::time_point<clock> pausetime;
+};
+
+int main(int argc, char **argv)
 {
     srand(time(nullptr));
+
+    bool pause_enabled = false;
+    if (argc >= 2 && strcmp(argv[1], "--pause") == 0) {
+        pause_enabled = true;
+    }
 
     {
         ProgressBar bar;
@@ -43,7 +79,7 @@ int main(int, char **)
     }
 
     {
-        auto begin = std::chrono::high_resolution_clock::now();
+        timer tmr;
         {
             size_t size = 6, max_steps = 10000;
 
@@ -68,33 +104,32 @@ int main(int, char **)
                         progress_bar_test(i, rand() % 9001 + 1000, bar);
                     });
                 }
-
-#if 0 // for debugging or testing
-            int ch;
-            bool paused = false, autopaused = false;
-            while ((ch = getch_noblocking()) != 'q') {
-                if (ch == 'p') {
-                    if (!paused) {
-                        pool.pause();
-                    } else {
-                        pool.resume();
-                    }
-                    paused = !paused;
-                } else if (ch == 'a') {
-                    autopaused = true;
-                } else if (autopaused) {
-                    auto pos = ProgressBar::getpos();
-                    if (std::get<1>(pos) >= 110) {
-                        pool.pause();
-                        paused = true;
+                if (pause_enabled) { // for debugging or testing
+                    int ch;
+                    bool paused = false, autopaused = false;
+                    while ((ch = getch_noblocking()) != 'q') {
+                        if (ch == 'p') {
+                            if (!paused) {
+                                pool.pause();
+                            } else {
+                                pool.resume();
+                            }
+                            paused = !paused;
+                        } else if (ch == 'a') {
+                            autopaused = true;
+                        } else if (autopaused) {
+                            auto pos = ProgressBar::ProgressWidget::getpos();
+                            if (std::get<1>(pos) >= 110) {
+                                pool.pause();
+                                paused = true;
+                            }
+                        }
                     }
                 }
-            }
-#endif
+                pool.wait();
             }
         }
-        auto elasped = std::chrono::duration<double>(std::chrono::high_resolution_clock::now() - begin).count();
-        printf("Time Elapsed: %.2f s.\n", elasped);
+        printf("Time Elapsed: %.2f s.\n", tmr.elasped());
     }
 
     return 0;

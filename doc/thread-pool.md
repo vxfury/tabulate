@@ -321,7 +321,7 @@ int main()
     sync_out.println("Submitted 12 more tasks.");
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
     pool.paused = true;
-    sync_out.println("Pool paused. Waiting for the ", pool.get_tasks_running(), " running tasks to complete.");
+    sync_out.println("Pool paused. Waiting for the ", pool.get_task_size_running(), " running tasks to complete.");
     pool.wait_for_tasks();
     sync_out.println("All running tasks completed. ", pool.get_tasks_queued(), " tasks still queued.");
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
@@ -331,7 +331,7 @@ int main()
     std::this_thread::sleep_for(std::chrono::milliseconds(1000));
     pool.paused = false;
     std::this_thread::sleep_for(std::chrono::milliseconds(250));
-    sync_out.println("Pool resumed. Waiting for the remaining ", pool.get_tasks_total(), " tasks (", pool.get_tasks_running(), " running and ", pool.get_tasks_queued(), " queued) to complete.");
+    sync_out.println("Pool resumed. Waiting for the remaining ", pool.get_tasks_total(), " tasks (", pool.get_task_size_running(), " running and ", pool.get_tasks_queued(), " queued) to complete.");
     pool.wait_for_tasks();
     sync_out.println("All tasks completed.");
 }
