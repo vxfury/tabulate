@@ -21,8 +21,6 @@
 #include "threadpool.h"
 #include "progress-bar.h"
 
-#include <stdio.h>
-
 int getch_noblocking(void)
 {
     fd_set rfds;

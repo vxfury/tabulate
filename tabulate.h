@@ -297,7 +297,7 @@ namespace tabulate
 {
 static const std::string NEWLINE = "\n";
 
-static size_t compute_width(const std::string &text, const std::string &locale, bool wchar_enabled)
+static size_t display_width_of(const std::string &text, const std::string &locale, bool wchar_enabled)
 {
     // delete ansi escape sequences
     std::regex e("\x1b(?:[@-Z\\-_]|\\[[0-?]*[ -/]*[@-~])");
@@ -411,50 +411,45 @@ static std::vector<std::string> explode_string(const std::string &input, const s
         }
         start = index + 1;
     }
+
+    return segments;
 }
 
-static std::vector<std::string> wrap_to_lines(const std::string &str, size_t width, const std::string &locale,
-                                              bool multi_bytes_character)
+static std::vector<std::string> wrap_lines(const std::string &str, size_t width, const std::string &locale,
+                                           bool multi_bytes_character)
 {
     std::vector<std::string> lines;
     {
         std::string line;
         std::stringstream ss(str);
         while (std::getline(ss, line, '\n')) {
-            lines.push_back(line);
-        }
-    }
+            std::string wrapped;
+            for (auto &word : explode_string(line, {" ", "-", "\t"})) {
+                if (display_width_of(wrapped, locale, multi_bytes_character)
+                        + display_width_of(word, locale, multi_bytes_character)
+                    > width) {
+                    if (display_width_of(wrapped, locale, multi_bytes_character) > 0) {
+                        lines.push_back(wrapped);
+                        wrapped = "";
+                    }
 
-    std::vector<std::string> wrapped_lines;
-    for (auto const &line : lines) {
-        std::string wrapped;
-        std::vector<std::string> words = explode_string(line, {" ", "-", "\t"});
+                    while (display_width_of(word, locale, multi_bytes_character) > width) {
+                        wrapped = word.substr(0, width - 1) + "-";
+                        lines.push_back(wrapped);
+                        wrapped = "";
+                        word = word.substr(width - 1);
+                    }
 
-        for (auto &word : words) {
-            if (compute_width(wrapped, locale, multi_bytes_character)
-                    + compute_width(word, locale, multi_bytes_character)
-                > width) {
-                if (compute_width(wrapped, locale, multi_bytes_character) > 0) {
-                    wrapped_lines.push_back(wrapped);
-                    wrapped = "";
+                    word = lstrip(word);
                 }
 
-                while (compute_width(word, locale, multi_bytes_character) > width) {
-                    wrapped = word.substr(0, width - 1) + "-";
-                    wrapped_lines.push_back(wrapped);
-                    wrapped = "";
-                    word = word.substr(width - 1);
-                }
-
-                word = lstrip(word);
+                wrapped += word;
             }
-
-            wrapped += word;
+            lines.push_back(wrapped);
         }
-        wrapped_lines.push_back(wrapped);
     }
 
-    return wrapped_lines;
+    return lines;
 }
 
 static std::string expand_to_size(const std::string &s, size_t len, bool multi_bytes_character = true)
@@ -466,7 +461,7 @@ static std::string expand_to_size(const std::string &s, size_t len, bool multi_b
     if (len == 0) {
         return s;
     }
-    size_t swidth = compute_width(s, "", multi_bytes_character);
+    size_t swidth = display_width_of(s, "", multi_bytes_character);
     for (size_t i = 0; i < len;) {
         if (swidth > len - i) {
             r += s.substr(0, len - i);
@@ -1005,7 +1000,7 @@ class Cell {
 
     size_t size()
     {
-        return compute_width(m_content, m_format.locale(), m_format.multi_bytes_character());
+        return display_width_of(m_content, m_format.locale(), m_format.multi_bytes_character());
     }
 
     Format &format()
@@ -1031,7 +1026,7 @@ class Cell {
 
                 size_t max_width = 0;
                 while (std::getline(ss, line, '\n')) {
-                    max_width = std::max(max_width, compute_width(line, m_format.locale(), true));
+                    max_width = std::max(max_width, display_width_of(line, m_format.locale(), true));
                 }
 
                 return max_width;
@@ -1646,8 +1641,8 @@ class Row {
             if (cell->width() == 0) {
                 wrapped.push_back(cell->get());
             } else {
-                wrapped = wrap_to_lines(cell->get(), cell->width(), cell->format().locale(),
-                                        cell->format().internationlization.multi_bytes_character);
+                wrapped = wrap_lines(cell->get(), cell->width(), cell->format().locale(),
+                                     cell->format().internationlization.multi_bytes_character);
 #ifdef __DEBUG__
                 std::cout << "wrap to " << wrapped.size() << " lines" << std::endl;
 #endif
@@ -1723,7 +1718,7 @@ class Row {
                 } else {
                     auto align_line_by = [&](const std::string &str, size_t width, Align align,
                                              const std::string &locale, bool multi_bytes_character) -> std::string {
-                        size_t linesize = compute_width(str, locale, multi_bytes_character);
+                        size_t linesize = display_width_of(str, locale, multi_bytes_character);
                         if (linesize >= width) {
                             return stringformatter(str, foreground_color, background_color, cell->styles());
                         }
@@ -2306,7 +2301,7 @@ class Table : public std::enable_shared_from_this<Table> {
             if (size > title.size()) {
                 exported = std::string((size - title.size()) / 2, ' ') + title + NEWLINE;
             } else {
-                auto lines = wrap_to_lines(title, size, "", true);
+                auto lines = wrap_lines(title, size, "", true);
                 for (auto line : lines) {
                     exported += line + NEWLINE;
                 }
@@ -2575,13 +2570,13 @@ class Table : public std::enable_shared_from_this<Table> {
         for (auto const &cell : *rows[0]) {
             auto &format = cell.format();
             if (format.borders.left.visiable) {
-                size += compute_width(format.borders.left.content, format.locale(),
-                                      format.internationlization.multi_bytes_character);
+                size += display_width_of(format.borders.left.content, format.locale(),
+                                         format.internationlization.multi_bytes_character);
             }
             size += format.borders.left.padding + cell.width() + format.borders.right.padding;
             if (format.borders.right.visiable) {
-                size += compute_width(format.borders.right.content, format.locale(),
-                                      format.internationlization.multi_bytes_character);
+                size += display_width_of(format.borders.right.content, format.locale(),
+                                         format.internationlization.multi_bytes_character);
             }
         }
         return size;
