@@ -60,11 +60,17 @@ class timer {
         buf.tms_cutime -= last.tms_cutime;
         buf.tms_cstime -= last.tms_cstime;
 
+        std::string ret;
         double sysclk = static_cast<double>(sysconf(_SC_CLK_TCK));
-        return "real: " + format_time((endtime - starttime) / sysclk) + "s, user mode: "
-               + format_time(buf.tms_utime / sysclk) + " s, kernel mode: " + format_time(buf.tms_stime / sysclk)
-               + " s, chirdren(user mode): " + format_time(buf.tms_cutime / sysclk)
-               + " s, chirdren(kernel mode): " + format_time(buf.tms_cstime / sysclk) + " s";
+        ret += "Real Time Elasped " + format_time((endtime - starttime) / sysclk) + "s. (User "
+               + format_time(buf.tms_utime / sysclk) + "s, Kernel " + format_time(buf.tms_stime / sysclk) + "s";
+        if (buf.tms_cutime != 0 || buf.tms_cstime != 0) {
+            ret += ", Chirdren(User) " + format_time(buf.tms_cutime / sysclk) + "s, Chirdren(Kernel) "
+                   + format_time(buf.tms_cstime / sysclk) + "s";
+        }
+        ret += ")";
+
+        return ret;
     }
 
   private:
@@ -82,67 +88,67 @@ int main(int argc, char **argv)
         pause_enabled = true;
     }
 
-    if (0) {
+    timer tmr;
+    {
         ProgressBar bar;
         for (int i = 0; i < 100; i++) {
             bar.advance(1);
             usleep(rand() % 20000);
         }
     }
+    std::cout << tmr.description() << std::endl;
 
+    tmr.reset();
     {
-        timer tmr;
+        size_t size = 6, max_steps = 10000;
+
+        ProgressBars bars("{progress} {elapsed} | {bar} | {remaining} {index}...", size, 0, 0, true, false,
+                          ProgressBar::ProgressWidget::getpos(), max_steps);
         {
-            size_t size = 6, max_steps = 10000;
-
-            ProgressBars bars("{progress} {elapsed} | {bar} | {remaining} {index}...", size, 0, 0, true, false,
-                              ProgressBar::ProgressWidget::getpos(), max_steps);
-            {
-                auto progress_bar_test = [](int i, size_t length, ProgressBar &bar) {
-                    size_t remain = length;
-                    bar.add_arg("index", std::to_string(i));
-                    while (remain > 0) {
-                        bar.set_progress(100.0 * (length - remain) / static_cast<double>(length));
-                        remain -= rand() % (remain + 1);
-                        usleep(rand() % 1000);
-                    }
-                    bar.overall().advance(1);
-                };
-
-                multiprocessing::threadpool<> pool(18);
-                for (size_t i = 0; i < max_steps; i++) {
-                    auto &bar = bars[i];
-                    pool.push([&, i]() {
-                        progress_bar_test(i, rand() % 9001 + 1000, bar);
-                    });
+            auto progress_bar_test = [](int i, size_t length, ProgressBar &bar) {
+                size_t remain = length;
+                bar.add_arg("index", std::to_string(i));
+                while (remain > 0) {
+                    bar.set_progress(100.0 * (length - remain) / static_cast<double>(length));
+                    remain -= rand() % (remain + 1);
+                    usleep(rand() % 1000);
                 }
-                if (pause_enabled) { // for debugging or testing
-                    int ch;
-                    bool paused = false, autopaused = false;
-                    while ((ch = getch_noblocking()) != 'q') {
-                        if (ch == 'p') {
-                            if (!paused) {
-                                pool.pause();
-                            } else {
-                                pool.resume();
-                            }
-                            paused = !paused;
-                        } else if (ch == 'a') {
-                            autopaused = true;
-                        } else if (autopaused) {
-                            auto pos = ProgressBar::ProgressWidget::getpos();
-                            if (std::get<1>(pos) >= 110) {
-                                pool.pause();
-                                paused = true;
-                            }
+                bar.overall().advance(1);
+            };
+
+            multiprocessing::threadpool<> pool(18);
+            for (size_t i = 0; i < max_steps; i++) {
+                auto &bar = bars[i];
+                pool.push([&, i]() {
+                    progress_bar_test(i, rand() % 9001 + 1000, bar);
+                });
+            }
+            if (pause_enabled) { // for debugging or testing
+                int ch;
+                bool paused = false, autopaused = false;
+                while ((ch = getch_noblocking()) != 'q') {
+                    if (ch == 'p') {
+                        if (!paused) {
+                            pool.pause();
+                        } else {
+                            pool.resume();
+                        }
+                        paused = !paused;
+                    } else if (ch == 'a') {
+                        autopaused = true;
+                    } else if (autopaused) {
+                        auto pos = ProgressBar::ProgressWidget::getpos();
+                        if (std::get<1>(pos) >= 110) {
+                            pool.pause();
+                            paused = true;
                         }
                     }
                 }
-                pool.wait();
             }
+            pool.wait();
         }
-        std::cout << tmr.description() << std::endl;
     }
+    std::cout << tmr.description() << std::endl;
 
     return 0;
 }
