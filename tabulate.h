@@ -2045,79 +2045,6 @@ std::string cornerformatter(Which which, const Cell *self, const Cell *top_left,
 } // namespace xterm
 } // namespace tabulate
 
-namespace tabulate
-{
-namespace markdown
-{
-std::string stringformatter(const std::string &str, TrueColor foreground_color, TrueColor background_color,
-                            const Styles &styles)
-{
-    std::string applied;
-
-    bool have = !foreground_color.none() || !background_color.none() || styles.size() != 0;
-
-    if (have) {
-        applied += "<span style=\"";
-
-        if (!foreground_color.none()) {
-            // color: <color>
-            applied += "color:" + to_string(foreground_color) + ";";
-        }
-
-        if (!background_color.none()) {
-            // color: <color>
-            applied += "background-color:" + to_string(background_color) + ";";
-        }
-
-        for (auto const &style : styles) {
-            switch (style) {
-                case Style::bold:
-                    applied += "font-weight:bold;";
-                    break;
-                case Style::italic:
-                    applied += "font-style:italic;";
-                    break;
-                // text-decoration: none|underline|overline|line-through|blink
-                case Style::crossed:
-                    applied += "text-decoration:line-through;";
-                    break;
-                case Style::underline:
-                    applied += "text-decoration:underline;";
-                    break;
-                case Style::blink:
-                    applied += "text-decoration:blink;";
-                    break;
-                default:
-                    // unsupported, do nothing
-                    break;
-            }
-        }
-        applied += "\">";
-    }
-
-    applied += str;
-
-    if (have) {
-        applied += "</span>";
-    }
-
-    return applied;
-}
-
-std::string borderformatter(Which, const Cell *, const Cell *, const Cell *, const Cell *, const Cell *, size_t,
-                            StringFormatter)
-{
-    return "|";
-}
-
-std::string cornerformatter(Which, const Cell *, const Cell *, const Cell *, const Cell *, const Cell *,
-                            StringFormatter)
-{
-    return "";
-}
-} // namespace markdown
-} // namespace tabulate
-
 class Table : public std::enable_shared_from_this<Table> {
   public:
     Table() {}
@@ -2260,7 +2187,7 @@ class Table : public std::enable_shared_from_this<Table> {
         return 0;
     }
 
-    std::string xterm() const
+    std::string xterm(bool disable_color = false) const
     {
         std::string exported;
         // add title
@@ -2268,10 +2195,19 @@ class Table : public std::enable_shared_from_this<Table> {
             exported += std::string((cached_width - title.size()) / 2, ' ') + title + NEWLINE;
         }
 
+        auto stringformatter = [=](const std::string &str, TrueColor foreground_color, TrueColor background_color,
+                                   const Styles &styles) -> std::string {
+            if (disable_color) {
+                return str;
+            } else {
+                return tabulate::xterm::stringformatter(str, foreground_color, background_color, styles);
+            }
+        };
+
         // add header
         if (rows.size() > 0) {
             const auto &header = *rows[0];
-            for (auto line : header.dump(tabulate::xterm::stringformatter, tabulate::xterm::borderformatter,
+            for (auto line : header.dump(stringformatter, tabulate::xterm::borderformatter,
                                          tabulate::xterm::cornerformatter, true, rows.size() == 1)) {
                 exported += line + NEWLINE;
             }
@@ -2280,7 +2216,7 @@ class Table : public std::enable_shared_from_this<Table> {
         // add table content
         for (size_t i = 1; i < rows.size(); i++) {
             auto const &row = *rows[i];
-            for (auto const &line : row.dump(tabulate::xterm::stringformatter, tabulate::xterm::borderformatter,
+            for (auto const &line : row.dump(stringformatter, tabulate::xterm::borderformatter,
                                              tabulate::xterm::cornerformatter, true, i == rows.size() - 1)) {
                 exported += line + NEWLINE;
             }

@@ -39,6 +39,27 @@ int main()
         movies[0][i].format().color(tabulate::Color::yellow).styles(tabulate::Style::bold);
     }
 
+    /**
+     * output all supported format, and you can catch one or more via
+     *
+     * awk '/BEGIN/{ f = 1; next } /END/{ f = 0 } f' all-formats.txt
+     *
+     */
+    std::cout << "-----BEGIN XTERM TABLE-----" << std::endl;
     std::cout << movies.xterm() << std::endl;
-    std::cout << "Markdown Table:\n" << movies.markdown() << std::endl;
+    std::cout << "-----END XTERM TABLE-----" << std::endl;
+
+    std::cout << "-----BEGIN ANSI TABLE-----" << std::endl;
+    std::cout << movies.xterm(true) << std::endl;
+    std::cout << "-----END ANSI TABLE-----" << std::endl;
+
+    std::cout << "-----BEGIN MARKDOWN TABLE-----" << std::endl;
+    std::cout << movies.markdown() << std::endl;
+    std::cout << "-----END MARKDOWN TABLE-----" << std::endl;
+
+    std::cout << "-----BEGIN LATEX TABLE-----" << std::endl;
+    std::cout << movies.latex() << std::endl;
+    std::cout << "-----END LATEX TABLE-----" << std::endl;
+
+    return 0;
 }

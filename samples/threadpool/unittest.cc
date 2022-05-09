@@ -5,6 +5,7 @@
 #include <vector>
 #include <iostream>
 #include <set>
+#include <map>
 
 #include "threadpool.h"
 using namespace multiprocessing;
@@ -209,14 +210,20 @@ void check(const bool condition)
  */
 ui32 count_unique_threads()
 {
-    std::set<std::thread::id> thread_IDs;
+    std::mutex lock;
+    std::atomic<size_t> excutes = 0;
+    std::map<std::thread::id, size_t> thread_IDs;
     for (size_t i = 0; i < pool.get_worker_size() * 4; i++) {
         pool.push([&]() {
-            thread_IDs.insert(std::this_thread::get_id());
+            lock.lock();
+            thread_IDs[std::this_thread::get_id()]++;
+            lock.unlock();
             std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            excutes++;
         });
     }
     pool.wait();
+
     return thread_IDs.size();
 }
 
@@ -229,10 +236,11 @@ void check_constructor()
     check(pool.get_worker_size() == std::thread::hardware_concurrency());
     dual_println(
         "Checking that the manually counted number of unique thread IDs is equal to the reported number of threads...");
+    auto unique_threads = count_unique_threads();
     dual_println("unfinished: ", pool.get_task_size_unfinished(), ", running: ", pool.get_task_size_running(),
                  ", queued: ", pool.get_task_size_queued(), ", thread-count: ", pool.get_worker_size(),
-                 ", unique-threds: ", count_unique_threads());
-    check(pool.get_worker_size() == count_unique_threads());
+                 ", unique-threds: ", unique_threads);
+    check(pool.get_worker_size() == unique_threads);
 }
 
 /**
