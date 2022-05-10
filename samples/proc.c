@@ -1,3 +1,19 @@
+/**
+ * Copyright 2022 Kiran Nowak(kiran.nowak@gmail.com)
+ *
+ * Licensed under the Apache License, Version 2.0 (the "License");
+ * you may not use this file except in compliance with the License.
+ * You may obtain a copy of the License at
+ *
+ *      https://www.apache.org/licenses/LICENSE-2.0
+ *
+ * Unless required by applicable law or agreed to in writing, software
+ * distributed under the License is distributed on an "AS IS" BASIS,
+ * WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ * See the License for the specific language governing permissions and
+ * limitations under the License.
+ */
+
 #define _GNU_SOURCE
 
 #include <errno.h>
@@ -20,17 +36,17 @@
 #endif
 
 struct xtask {
-    pid_t pid;                   /* The process ID */
-    pid_t ppid;                  /* The PID of the parent */
-    char state;                  /* State of the process, one character from "RSDZTW" */
-    char uname[64];              /* The user name */
-    char name[128];              /* Name of the process */
-    char path[512];              /* Full path of the executeable */
-    char cmdline[1024];          /* The cmdline of the process */
-    time_t starttime;            /* Starttime */
-    size_t number_threads;       /* Number of threads */
+    pid_t pid;             /* The process ID */
+    pid_t ppid;            /* The PID of the parent */
+    char state;            /* State of the process, one character from "RSDZTW" */
+    char uname[64];        /* The user name */
+    char name[128];        /* Name of the process */
+    char path[512];        /* Full path of the executeable */
+    char cmdline[1024];    /* The cmdline of the process */
+    time_t starttime;      /* Starttime */
+    size_t number_threads; /* Number of threads */
 #ifdef STATX_SUPPORTED
-    struct statx statxbuf;       /* Status of the executeable */
+    struct statx statxbuf; /* Status of the executeable */
 #endif
     struct stat executable_stat; /* Status of the executeable */
 };
@@ -317,13 +333,13 @@ int get_process_details(int pid, struct xtask *task)
             long int number_threads = 0;
             unsigned long long starttime = 0;
             sscanf(proc_stat, spcifiers,
-                   &task->pid,   // (1) The process ID.
-                   &task->name,  // (2) The filename of the executable, in parentheses.
-                   &task->state, // (3) One character from the string "RSDZTW" where R is running, S is
-                                 //     sleeping in  an  interruptible wait, D is waiting in uninterruptible
-                                 //     disk sleep, Z is zombie, T is traced or stopped (on a signal), and W
-                                 //     is paging.
-                   &task->ppid,  // (4) The PID of the parent.
+                   &task->pid,      // (1) The process ID.
+                   &task->name,     // (2) The filename of the executable, in parentheses.
+                   &task->state,    // (3) One character from the string "RSDZTW" where R is running, S is
+                                    //     sleeping in  an  interruptible wait, D is waiting in uninterruptible
+                                    //     disk sleep, Z is zombie, T is traced or stopped (on a signal), and W
+                                    //     is paging.
+                   &task->ppid,     // (4) The PID of the parent.
                    &number_threads, // (20) Number of threads in this process (since  Linux  2.6)
                    &starttime       // (22) The time the process started after system boot.
             );
@@ -479,12 +495,11 @@ static void dump_statx(struct statx *stx)
     printf("\n");
 
     if (stx->stx_mask & STATX_MODE)
-        printf("Access: (%04o/%c%c%c%c%c%c%c%c%c%c)  ", stx->stx_mode & 07777, ft,
-               stx->stx_mode & S_IRUSR ? 'r' : '-', stx->stx_mode & S_IWUSR ? 'w' : '-',
-               stx->stx_mode & S_IXUSR ? 'x' : '-', stx->stx_mode & S_IRGRP ? 'r' : '-',
-               stx->stx_mode & S_IWGRP ? 'w' : '-', stx->stx_mode & S_IXGRP ? 'x' : '-',
-               stx->stx_mode & S_IROTH ? 'r' : '-', stx->stx_mode & S_IWOTH ? 'w' : '-',
-               stx->stx_mode & S_IXOTH ? 'x' : '-');
+        printf("Access: (%04o/%c%c%c%c%c%c%c%c%c%c)  ", stx->stx_mode & 07777, ft, stx->stx_mode & S_IRUSR ? 'r' : '-',
+               stx->stx_mode & S_IWUSR ? 'w' : '-', stx->stx_mode & S_IXUSR ? 'x' : '-',
+               stx->stx_mode & S_IRGRP ? 'r' : '-', stx->stx_mode & S_IWGRP ? 'w' : '-',
+               stx->stx_mode & S_IXGRP ? 'x' : '-', stx->stx_mode & S_IROTH ? 'r' : '-',
+               stx->stx_mode & S_IWOTH ? 'w' : '-', stx->stx_mode & S_IXOTH ? 'x' : '-');
     if (stx->stx_mask & STATX_UID) printf("Uid: %5d   ", stx->stx_uid);
     if (stx->stx_mask & STATX_GID) printf("Gid: %5d\n", stx->stx_gid);
 
@@ -541,8 +556,8 @@ int main(int argc, char **argv)
         char buff[20];
         printf("pid: %d, ppid: %d, state: %c, uname: %s, name: %s, cmdline: \"%s\", path: \"%s\", "
                "threads: %ld, starttime: %lu\n",
-               task.pid, task.ppid, task.state, task.uname, task.name, task.cmdline, task.path,
-               task.number_threads, task.starttime);
+               task.pid, task.ppid, task.state, task.uname, task.name, task.cmdline, task.path, task.number_threads,
+               task.starttime);
 
         {
             char buff[20];

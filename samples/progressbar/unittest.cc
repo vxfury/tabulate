@@ -19,7 +19,7 @@
 #include <iostream>
 #include <sys/times.h>
 #include "threadpool.h"
-#include "progress-bar.h"
+#include "progressbar.h"
 
 int getch_noblocking(void)
 {
