@@ -23,6 +23,34 @@
 #include <set>
 #include <map>
 
+class debuger {
+  public:
+    debuger(std::ostream &_os = std::cout) : os(_os){};
+
+    template <typename T, typename... Args>
+    void print(const T &first, const Args &...args)
+    {
+        const std::scoped_lock __(lock);
+        os << first;
+        if (sizeof...(Args) > 0) {
+            print(" ", args...);
+        }
+    }
+
+    template <typename... T>
+    void println(const T &...items)
+    {
+        print(items..., '\n');
+    }
+
+  private:
+    std::ostream &os;
+    mutable std::mutex lock;
+};
+
+debuger dbg;
+#define THREADPOOL_TRACE dbg.println
+
 #include "threadpool.h"
 using namespace multiprocessing;
 
@@ -141,7 +169,7 @@ std::ofstream log_file;
 synced_stream sync_file(log_file);
 
 // A global thread pool object.
-threadpool pool;
+threadpool<YIELD_OR_SCHED_DURATION> pool;
 
 // A global random_device object used to seed some random number generators.
 std::random_device rd;
@@ -231,6 +259,7 @@ ui32 count_unique_threads()
     std::map<std::thread::id, size_t> thread_IDs;
     for (size_t i = 0; i < pool.get_worker_size() * 4; i++) {
         pool.push([&]() {
+            dual_println("ThreadID: ", std::this_thread::get_id());
             lock.lock();
             thread_IDs[std::this_thread::get_id()]++;
             lock.unlock();
@@ -238,7 +267,9 @@ ui32 count_unique_threads()
             excutes++;
         });
     }
+    dual_println("before wait");
     pool.wait();
+    dual_println("after wait");
 
     return thread_IDs.size();
 }
@@ -271,6 +302,7 @@ void check_reset()
     dual_println("Checking that after reset() the manually counted number of unique thread IDs is equal to the "
                  "reported number of threads...");
     check(pool.get_worker_size() == count_unique_threads());
+    dual_println("before reset");
     pool.reset(std::thread::hardware_concurrency());
     dual_println("Checking that after a second reset() the thread pool reports a number of threads equal to the "
                  "hardware concurrency...");
@@ -452,7 +484,7 @@ void check_parallelize_loop()
 void check_sleep_duration(const ui32 &duration)
 {
     dual_println("Submitting tasks with sleep_duration = ", duration, " microseconds...");
-    // pool.sleep_duration = duration;
+    pool.set_duration(duration);
     ui32 n = pool.get_worker_size() * 100;
     std::vector<std::atomic<bool>> flags(n);
     for (ui32 i = 0; i < n; i++)
@@ -470,13 +502,13 @@ void check_sleep_duration(const ui32 &duration)
  */
 void check_sleep_duration()
 {
-    ui32 old_duration = 0; // pool.sleep_duration;
+    ui32 old_duration = pool.get_duration();
     check_sleep_duration(0);
     std::mt19937_64 mt(rd());
     std::uniform_int_distribution<ui32> dist(1, 2000);
     for (ui32 i = 0; i < 5; i++) check_sleep_duration(dist(mt));
     dual_println("Resetting sleep_duration to the default value (", old_duration, " microseconds).");
-    // pool.sleep_duration = old_duration;
+    pool.set_duration(old_duration);
 }
 
 /**
@@ -489,11 +521,12 @@ void check_task_monitoring()
     pool.reset(n);
     dual_println("Submitting ", n * 3, " tasks.");
     std::vector<std::atomic<bool>> release(n * 3);
-    for (ui32 i = 0; i < n * 3; i++)
+    for (ui32 i = 0; i < n * 3; i++) {
         pool.push([&release, i] {
             while (!release[i]) std::this_thread::yield();
             dual_println("Task ", i, " released.");
         });
+    }
     std::this_thread::sleep_for(std::chrono::milliseconds(300));
     dual_println("After submission, should have: ", n * 3, " tasks total, ", n, " tasks running, ", n * 2,
                  " tasks queued...");
@@ -532,11 +565,13 @@ void check_pausing()
     dual_println("Pausing pool.");
     pool.pause();
     dual_println("Submitting ", n * 3, " tasks, each one waiting for 200ms.");
-    for (ui32 i = 0; i < n * 3; i++)
+    for (ui32 i = 0; i < n * 3; i++) {
         pool.push([i] {
             std::this_thread::sleep_for(std::chrono::milliseconds(200));
             dual_println("Task ", i, " done.");
         });
+    }
+
     dual_println("Immediately after submission, should have: ", n * 3, " tasks total, ", 0, " tasks running, ", n * 3,
                  " tasks queued...");
     check(pool.get_task_size_unfinished() == n * 3 && pool.get_task_size_running() == 0
@@ -1069,7 +1104,7 @@ void check_performance()
     ui64 optimal_sleep = 0;
     for (ui64 sleep = 0; sleep <= 2000; sleep += 100) {
         dual_print(".");
-        // pool.sleep_duration = (ui32)sleep;
+        pool.set_duration(sleep);
         tmr.start();
         matrix<double> C = add_matrices(A, B, thread_count);
         matrix<double> D = A.transpose(thread_count);
@@ -1085,7 +1120,7 @@ void check_performance()
         dual_println("\nResult: Using std::this_thread::yield() instead of std::this_thread::sleep_for() is optimal.");
     else
         dual_println("\nResult: The optimal sleep duration is ", optimal_sleep, " microseconds.");
-    // pool.sleep_duration = (ui32)optimal_sleep;
+    pool.set_duration(optimal_sleep);
 
     // Vectors to store statistics.
     std::vector<double> different_n_timings;
@@ -1182,7 +1217,7 @@ int main()
     check_constructor();
 
     print_header("Checking that reset() works:");
-    // check_reset();
+    check_reset();
 
     print_header("Checking that push() works:");
     check_push_task();
@@ -1200,10 +1235,10 @@ int main()
     check_sleep_duration();
 
     print_header("Checking that task monitoring works:");
-    // FIXME: check_task_monitoring();
+    // check_task_monitoring();
 
     print_header("Checking that pausing works:");
-    // FIXME: check_pausing();
+    // check_pausing();
 
     print_header("Checking that exception handling works:");
     check_exceptions();

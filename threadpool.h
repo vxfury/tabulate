@@ -28,6 +28,11 @@
 #include <type_traits>        // std::decay_t, std::enable_if_t, std::is_void_v, std::invoke_result_t
 #include <utility>            // std::move, std::swap
 #include <condition_variable> // std::condition_variable
+#include <iostream>
+
+#ifndef THREADPOOL_TRACE
+#define THREADPOOL_TRACE(...)
+#endif
 
 namespace multiprocessing
 {
@@ -47,18 +52,18 @@ namespace multiprocessing
  *
  */
 enum {
-    THREAD_YIELD,
-    SCHED_DURATION,
     CONDITION_VARIABLE,
+    YIELD_OR_SCHED_DURATION,
 };
 
-template <int strategy = CONDITION_VARIABLE, size_t duration = 5>
+template <int strategy = CONDITION_VARIABLE>
 class threadpool {
   public:
     using size_type = unsigned int;
     threadpool(size_type concurrency = std::thread::hardware_concurrency())
         : paused(false),
           stopped(false),
+          duration(10),
           concurrency(concurrency),
           workers(new std::thread[concurrency]),
           unfinished_task_size(0)
@@ -89,22 +94,31 @@ class threadpool {
     {
         while (true) {
             if (!paused) {
-                if (unfinished_task_size == 0) break;
+                if (unfinished_task_size == 0) {
+                    THREADPOOL_TRACE("All tasks have been executed");
+                    break;
+                }
             } else {
-                if (get_task_size_running() == 0) break;
+                if (get_task_size_running() == 0) {
+                    THREADPOOL_TRACE("No task running");
+                    break;
+                }
             }
 
             if constexpr (strategy == CONDITION_VARIABLE) {
+                THREADPOOL_TRACE("Idle");
                 std::unique_lock<std::mutex> lock(queue_lock);
                 queue_cond.wait(lock, [this] {
                     return stopped || (!paused || !task_queue.empty());
                 });
             }
-            if constexpr (strategy == THREAD_YIELD) {
-                std::this_thread::yield();
-            }
-            if constexpr (strategy == SCHED_DURATION) {
-                std::this_thread::sleep_for(std::chrono::microseconds(duration));
+            if constexpr (strategy == YIELD_OR_SCHED_DURATION) {
+                THREADPOOL_TRACE("Idle");
+                if (duration == 0) {
+                    std::this_thread::yield();
+                } else {
+                    std::this_thread::sleep_for(std::chrono::microseconds(duration));
+                }
             }
         }
     }
@@ -123,13 +137,39 @@ class threadpool {
         }
     }
 
-    void reset(size_type concurrency = std::thread::hardware_concurrency())
+    void set_duration(size_t duration_ms)
     {
+        duration = duration_ms;
+    }
+
+    size_t get_duration()
+    {
+        return duration;
+    }
+
+    void reset(size_type worker_size = std::thread::hardware_concurrency())
+    {
+#if 0
+        bool was_paused = paused;
+        if (!was_paused) {
+            pause();
+        }
+        wait();
+        for (size_type i = 0; i < concurrency; i++) {
+            workers[i].join();
+        }
+#endif
         shutdown();
+        concurrency = worker_size;
         workers.reset(new std::thread[concurrency]);
         for (size_type i = 0; i < concurrency; i++) {
             workers[i] = std::thread(&threadpool::__worker, this);
         }
+#if 0
+        if (!was_paused) {
+            resume();
+        }
+#endif
     }
 
     bool is_alive()
@@ -201,11 +241,12 @@ class threadpool {
                     return stopped || (!paused || !task_queue.empty());
                 });
             }
-            if constexpr (strategy == THREAD_YIELD) {
-                std::this_thread::yield();
-            }
-            if constexpr (strategy == SCHED_DURATION) {
-                std::this_thread::sleep_for(std::chrono::microseconds(duration));
+            if constexpr (strategy == YIELD_OR_SCHED_DURATION) {
+                if (duration == 0) {
+                    std::this_thread::yield();
+                } else {
+                    std::this_thread::sleep_for(std::chrono::microseconds(duration));
+                }
             }
         }
     }
@@ -305,6 +346,53 @@ class threadpool {
   public:
     void __worker()
     {
+        if constexpr (strategy == CONDITION_VARIABLE) {
+            while (true) {
+                std::function<void()> task;
+                {
+                    std::unique_lock<std::mutex> lock(queue_lock);
+                    queue_cond.wait(lock, [this] {
+                        return stopped || (!paused && !task_queue.empty());
+                    });
+                    if (stopped && task_queue.empty()) {
+                        return;
+                    }
+
+                    task = std::move(task_queue.front());
+                    task_queue.pop();
+                }
+
+                task();
+                unfinished_task_size--;
+            }
+        } else {
+            while (!stopped) {
+                auto pop_task = [&](std::function<void()> &task) {
+                    std::lock_guard<std::mutex> guard(queue_lock);
+                    if (paused || task_queue.empty()) {
+                        return false;
+                    } else {
+                        task = std::move(task_queue.front());
+                        task_queue.pop();
+                        return true;
+                    }
+                };
+
+                std::function<void()> task;
+                if (pop_task(task)) {
+                    task();
+                    unfinished_task_size--;
+                } else {
+                    if (duration == 0) {
+                        std::this_thread::yield();
+                    } else {
+                        std::this_thread::sleep_for(std::chrono::microseconds(duration));
+                    }
+                }
+            }
+        }
+
+#if 0
         while (true) {
             if constexpr (strategy == CONDITION_VARIABLE) {
                 std::function<void()> task;
@@ -340,7 +428,7 @@ class threadpool {
                     task();
                     unfinished_task_size--;
                 } else if (!stopped) {
-                    if constexpr (strategy == THREAD_YIELD) {
+                    if (duration == 0) {
                         std::this_thread::yield();
                     } else {
                         std::this_thread::sleep_for(std::chrono::microseconds(duration));
@@ -350,6 +438,7 @@ class threadpool {
                 }
             }
         }
+#endif
     }
 
     /**
@@ -360,7 +449,9 @@ class threadpool {
     std::atomic<bool> paused;
     std::atomic<bool> stopped;
 
-    const size_type concurrency;
+    size_t duration;
+
+    size_type concurrency;
     std::unique_ptr<std::thread[]> workers;
 
     mutable std::mutex queue_lock;
