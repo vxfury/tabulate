@@ -27,14 +27,14 @@
 #include <unordered_map>
 #include "tabulate.h"
 
-template <class Tp>
-inline void DoNotOptimize(Tp const &value)
+template <typename T>
+inline void DoNotOptimize(T const &value)
 {
     asm volatile("" : : "r,m"(value) : "memory");
 }
 
-template <class Tp>
-inline void DoNotOptimize(Tp &value)
+template <typename T>
+inline void DoNotOptimize(T &value)
 {
 #if defined(__clang__)
     asm volatile("" : "+r,m"(value) : : "memory");
@@ -100,7 +100,7 @@ class Profiler {
         }
 
         BENCHER(_, task(), N, repeat);
-        ProfilerCache::Instance().insert(name, _avg, _stddev);
+        ProfilerCollections::Instance().insert(name, _avg, _stddev);
         std::cout << name << ": avg = " << _avg << ", stddev = " << _stddev << std::endl;
     }
 
@@ -109,17 +109,22 @@ class Profiler {
         Profiler profiler(name, task, repeat, N);
     }
 
+    static void SetTitle(const std::string &title)
+    {
+        ProfilerCollections::Instance().set_title(title);
+    }
+
     static void AsReference(const std::string &name)
     {
-        ProfilerCache::Instance().mark_as_ref(name);
+        ProfilerCollections::Instance().mark_as_ref(name);
     }
 
   private:
-    class ProfilerCache {
+    class ProfilerCollections {
       public:
-        static ProfilerCache &Instance()
+        static ProfilerCollections &Instance()
         {
-            static ProfilerCache instance;
+            static ProfilerCollections instance;
             return instance;
         }
 
@@ -137,7 +142,7 @@ class Profiler {
                 references.emplace_back(it->name, it->avg, it->stddev);
                 collections.erase(it);
             } else {
-                std::cout << "not found" << std::endl;
+                std::cerr << "Not Found: " << s << std::endl;
             }
         }
 
@@ -246,8 +251,8 @@ class Profiler {
             table.format().align(tabulate::Align::center);
         }
 
-        ProfilerCache() {}
-        ~ProfilerCache()
+        ProfilerCollections() {}
+        ~ProfilerCollections()
         {
             tabulate::Table table;
             table.set_title(title);

@@ -4,7 +4,7 @@ PROJECT("Table Maker for Modern C++")
 INCLUDE(cmake/target_configure.cmake)
 
 ENABLE_TESTING()
-FOREACH (category tabulate cxxopt progressbar threadpool)
+FOREACH (category tabulate cxxopt progressbar threadpool misc)
   FILE(GLOB files samples/${category}/*.cc)
   ADD_CUSTOM_TARGET(${category})
   FOREACH (file ${files})
