@@ -3,6 +3,8 @@ PROJECT("Table Maker for Modern C++")
 
 INCLUDE(cmake/target_configure.cmake)
 
+LINK_LIBRARIES(yaml-cpp)
+
 ENABLE_TESTING()
 FOREACH (category tabulate cxxopt progressbar threadpool misc)
   FILE(GLOB files samples/${category}/*.cc)
