@@ -1,0 +1,1 @@
+/usr/bin/cc CMakeFiles/cpusage.dir/cpusage.c.o -o cpusage 

@@ -1,9 +1,19 @@
 CMAKE_MINIMUM_REQUIRED(VERSION 3.0)
 PROJECT("Table Maker for Modern C++")
 
-INCLUDE(cmake/target_configure.cmake)
+INCLUDE(cmake/ConfigureTarget.cmake)
 
-LINK_LIBRARIES(yaml-cpp)
+INCLUDE(cmake/FindYamlCpp.cmake)
+IF (YAMLCPP_FOUND)
+  INCLUDE_DIRECTORIES(${YAMLCPP_INCLUDE_DIR})
+  LINK_LIBRARIES(${YAMLCPP_LIBRARY})
+ENDIF ()
+
+INCLUDE(cmake/FindJsonCpp.cmake)
+IF (JSONCPP_FOUND)
+  INCLUDE_DIRECTORIES(${JSONCPP_INCLUDE_DIR})
+  LINK_LIBRARIES(${JSONCPP_LIBRARY})
+ENDIF ()
 
 ENABLE_TESTING()
 FOREACH (category tabulate cxxopt progressbar threadpool misc)
@@ -18,7 +28,7 @@ FOREACH (category tabulate cxxopt progressbar threadpool misc)
     ADD_TEST(NAME ${category}-${sample} COMMAND ${category}-${sample}
              WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
     )
-    TARGET_CONFIGURE(${category}-${sample})
+    CONFIGURETARGET(${category}-${sample})
     ADD_DEPENDENCIES(${category} ${category}-${sample})
   ENDFOREACH ()
 ENDFOREACH ()

@@ -1,0 +1,3 @@
+/home/kiran/DEVEL/survey/tabulate/samples/cpusage/build/CMakeFiles/cpusage.dir
+/home/kiran/DEVEL/survey/tabulate/samples/cpusage/build/CMakeFiles/edit_cache.dir
+/home/kiran/DEVEL/survey/tabulate/samples/cpusage/build/CMakeFiles/rebuild_cache.dir

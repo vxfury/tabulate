@@ -1,0 +1,51 @@
+name: Continuous Integration
+
+on: [push, pull_request]
+
+jobs:
+  build:
+    name: ${{ matrix.config.name }} with ${{ matrix.optimization }}
+    runs-on: 'ubuntu-latest'
+    strategy:
+      fail-fast: false
+      matrix:
+        config:
+        - {
+            name: "gcc 10",
+            cc: "gcc",
+            cxx: "g++"
+          }
+        - {
+            name: "gcc 11",
+            cc: "gcc",
+            cxx: "g++"
+          }
+        optimization: ["-O0", "-O2"]
+    env:
+      CC: ${{ matrix.config.cc }}
+      CXX: ${{ matrix.config.cxx }}
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        submodules: 'recursive'
+    - name: Install dependencies
+      run: |
+        sudo apt update
+        sudo apt install libboost-all-dev
+    - name: Install gcc 10
+      if: startsWith(matrix.config.name, 'gcc 10')
+      run: |
+        sudo apt install gcc-10 g++-10
+        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-10 100 --slave /usr/bin/g++ g++ /usr/bin/g++-10 --slave /usr/bin/gcov gcov /usr/bin/gcov-10
+    - name: Install gcc 11
+      if: startsWith(matrix.config.name, 'gcc 11')
+      run: |
+        sudo apt install gcc-11 g++-11
+        sudo update-alternatives --install /usr/bin/gcc gcc /usr/bin/gcc-11 100 --slave /usr/bin/g++ g++ /usr/bin/g++-11 --slave /usr/bin/gcov gcov /usr/bin/gcov-11
+    - name: Build library, simple linux load monitor and linuxsystem websocket service
+      run: |
+        mkdir build
+        cd build
+        cmake .. -DUSE_THIRDPARTY_EXAMPLES=ON -DCMAKE_CXX_FLAGS="${{ matrix.optimization }}"
+        make -C ../thirdparty/uWebSockets/
+        cmake --build . --target linuxmonitoring simple_linuxsystemMonitor linuxsystemMonitor

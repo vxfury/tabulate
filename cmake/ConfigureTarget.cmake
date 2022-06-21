@@ -1,4 +1,4 @@
-MACRO (target_configure target)
+MACRO (ConfigureTarget target)
   # libunwind: a portable and efficient C programming interface (API) to determine the call-chain of a program
   IF (CMAKE_SYSTEM_NAME STREQUAL "Linux" AND NOT CMAKE_CROSSCOMPILING)
     FIND_PACKAGE(PkgConfig)
